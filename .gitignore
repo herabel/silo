@@ -1,0 +1,10 @@
+/target
+sessions/
+*.silo
+*.vault
+*.log
+*.tmp
+.silo/
+master.key
+web_scout.exe
+web_scout
