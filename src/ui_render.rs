@@ -3,18 +3,24 @@ use eframe::egui::{self, Color32, Frame, Margin, RichText, Rounding, Stroke};
 #[derive(Debug, Clone)]
 pub enum ContentSegment {
     Text(String),
-    CodeBlock {
-        language: String,
-        code: String,
-    },
+    CodeBlock { language: String, code: String },
 }
 
 #[derive(Debug, Clone)]
 pub enum TextBlock {
-    Heading { level: usize, text: String },
-    Table { headers: Vec<String>, rows: Vec<Vec<String>> },
+    Heading {
+        level: usize,
+        text: String,
+    },
+    Table {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
     Divider,
-    ListItem { bullet: String, text: String },
+    ListItem {
+        bullet: String,
+        text: String,
+    },
     Paragraph(String),
 }
 
@@ -46,14 +52,22 @@ pub fn parse_markdown_segments(input: &str) -> Vec<ContentSegment> {
             if let Some(fence_end) = input[code_start..].find("```") {
                 let code_content = input[code_start..code_start + fence_end].trim_end_matches('\n');
                 segments.push(ContentSegment::CodeBlock {
-                    language: if lang.is_empty() { "code".to_string() } else { lang },
+                    language: if lang.is_empty() {
+                        "code".to_string()
+                    } else {
+                        lang
+                    },
                     code: code_content.to_string(),
                 });
                 current_pos = code_start + fence_end + 3;
             } else {
                 let code_content = input[code_start..].trim_end_matches('\n');
                 segments.push(ContentSegment::CodeBlock {
-                    language: if lang.is_empty() { "code".to_string() } else { lang },
+                    language: if lang.is_empty() {
+                        "code".to_string()
+                    } else {
+                        lang
+                    },
                     code: code_content.to_string(),
                 });
                 break;
@@ -87,7 +101,11 @@ pub fn append_rich_spans(
     let mut is_italic = force_italic;
     let mut is_code = false;
 
-    let flush = |job: &mut egui::text::LayoutJob, txt: &mut String, bold: bool, italic: bool, code: bool| {
+    let flush = |job: &mut egui::text::LayoutJob,
+                 txt: &mut String,
+                 bold: bool,
+                 italic: bool,
+                 code: bool| {
         if txt.is_empty() {
             return;
         }
@@ -179,7 +197,14 @@ pub fn create_rich_layout(
         job.wrap.max_width = wrap_width;
     }
     job.wrap.break_anywhere = false;
-    append_rich_spans(&mut job, text, base_size, base_color, force_bold, force_italic);
+    append_rich_spans(
+        &mut job,
+        text,
+        base_size,
+        base_color,
+        force_bold,
+        force_italic,
+    );
     job
 }
 
@@ -252,7 +277,10 @@ pub fn parse_text_blocks(raw_text: &str) -> Vec<TextBlock> {
         // Table detection: line starts and ends with '|'
         if line.starts_with('|') && line.ends_with('|') && line.matches('|').count() >= 2 {
             let mut table_lines = Vec::new();
-            while i < num_lines && lines[i].trim().starts_with('|') && lines[i].trim().ends_with('|') {
+            while i < num_lines
+                && lines[i].trim().starts_with('|')
+                && lines[i].trim().ends_with('|')
+            {
                 table_lines.push(lines[i].trim());
                 i += 1;
             }
@@ -265,7 +293,8 @@ pub fn parse_text_blocks(raw_text: &str) -> Vec<TextBlock> {
 
                 let headers = parse_cells(table_lines[0]);
                 let is_sep = |row: &str| -> bool {
-                    row.chars().all(|c| c == '|' || c == '-' || c == ':' || c == ' ')
+                    row.chars()
+                        .all(|c| c == '|' || c == '-' || c == ':' || c == ' ')
                 };
 
                 let start_idx = if is_sep(table_lines[1]) { 2 } else { 1 };
@@ -294,19 +323,31 @@ pub fn parse_text_blocks(raw_text: &str) -> Vec<TextBlock> {
 
         // Headings
         if line.starts_with("# ") {
-            blocks.push(TextBlock::Heading { level: 1, text: line[2..].trim().to_string() });
+            blocks.push(TextBlock::Heading {
+                level: 1,
+                text: line[2..].trim().to_string(),
+            });
             i += 1;
             continue;
         } else if line.starts_with("## ") {
-            blocks.push(TextBlock::Heading { level: 2, text: line[3..].trim().to_string() });
+            blocks.push(TextBlock::Heading {
+                level: 2,
+                text: line[3..].trim().to_string(),
+            });
             i += 1;
             continue;
         } else if line.starts_with("### ") {
-            blocks.push(TextBlock::Heading { level: 3, text: line[4..].trim().to_string() });
+            blocks.push(TextBlock::Heading {
+                level: 3,
+                text: line[4..].trim().to_string(),
+            });
             i += 1;
             continue;
         } else if line.starts_with("#### ") {
-            blocks.push(TextBlock::Heading { level: 4, text: line[5..].trim().to_string() });
+            blocks.push(TextBlock::Heading {
+                level: 4,
+                text: line[5..].trim().to_string(),
+            });
             i += 1;
             continue;
         }
@@ -377,14 +418,26 @@ pub fn render_message_content(ui: &mut egui::Ui, text: &str) -> Option<(String, 
                                         _ => (13.5, Color32::from_rgb(148, 163, 184), 4.0, 2.0),
                                     };
                                     ui.add_space(pad_top);
-                                    let job = create_rich_layout(&text, size, color, true, false, base_wrap_width);
+                                    let job = create_rich_layout(
+                                        &text,
+                                        size,
+                                        color,
+                                        true,
+                                        false,
+                                        base_wrap_width,
+                                    );
                                     ui.add(egui::Label::new(job).selectable(true).wrap());
                                     ui.add_space(pad_bot);
                                 }
                                 TextBlock::Table { headers, rows } => {
                                     ui.add_space(8.0);
                                     let col_spacing = 16.0;
-                                    let col_widths = compute_column_widths(&headers, &rows, base_wrap_width, col_spacing);
+                                    let col_widths = compute_column_widths(
+                                        &headers,
+                                        &rows,
+                                        base_wrap_width,
+                                        col_spacing,
+                                    );
 
                                     Frame::none()
                                         .fill(Color32::from_rgb(14, 18, 26))
@@ -396,52 +449,102 @@ pub fn render_message_content(ui: &mut egui::Ui, text: &str) -> Option<(String, 
                                                 .id_salt(format!("table_scroll_{}_{}", idx, b_idx))
                                                 .auto_shrink([false, true])
                                                 .show(ui, |ui| {
-                                                    egui::Grid::new(format!("table_grid_{}_{}", idx, b_idx))
-                                                        .striped(true)
-                                                        .spacing([col_spacing, 10.0])
-                                                        .show(ui, |ui| {
-                                                            // Header row
-                                                            for (c_idx, h) in headers.iter().enumerate() {
-                                                                let col_w = col_widths.get(c_idx).copied().unwrap_or(120.0);
+                                                    egui::Grid::new(format!(
+                                                        "table_grid_{}_{}",
+                                                        idx, b_idx
+                                                    ))
+                                                    .striped(true)
+                                                    .spacing([col_spacing, 10.0])
+                                                    .show(ui, |ui| {
+                                                        // Header row
+                                                        for (c_idx, h) in headers.iter().enumerate()
+                                                        {
+                                                            let col_w = col_widths
+                                                                .get(c_idx)
+                                                                .copied()
+                                                                .unwrap_or(120.0);
+                                                            ui.allocate_ui_with_layout(
+                                                                egui::Vec2::new(col_w, 0.0),
+                                                                egui::Layout::top_down(
+                                                                    egui::Align::LEFT,
+                                                                ),
+                                                                |ui| {
+                                                                    ui.set_min_width(col_w);
+                                                                    ui.set_max_width(col_w);
+                                                                    let job = create_rich_layout(
+                                                                        h,
+                                                                        13.5,
+                                                                        Color32::from_rgb(
+                                                                            147, 197, 253,
+                                                                        ),
+                                                                        true,
+                                                                        false,
+                                                                        col_w,
+                                                                    );
+                                                                    ui.add(
+                                                                        egui::Label::new(job)
+                                                                            .selectable(true)
+                                                                            .wrap(),
+                                                                    );
+                                                                },
+                                                            );
+                                                        }
+                                                        ui.end_row();
+
+                                                        // Data rows
+                                                        for row in &rows {
+                                                            for (c_idx, cell) in
+                                                                row.iter().enumerate()
+                                                            {
+                                                                let col_w = col_widths
+                                                                    .get(c_idx)
+                                                                    .copied()
+                                                                    .unwrap_or(120.0);
                                                                 ui.allocate_ui_with_layout(
                                                                     egui::Vec2::new(col_w, 0.0),
-                                                                    egui::Layout::top_down(egui::Align::LEFT),
+                                                                    egui::Layout::top_down(
+                                                                        egui::Align::LEFT,
+                                                                    ),
                                                                     |ui| {
                                                                         ui.set_min_width(col_w);
                                                                         ui.set_max_width(col_w);
-                                                                        let job = create_rich_layout(h, 13.5, Color32::from_rgb(147, 197, 253), true, false, col_w);
-                                                                        ui.add(egui::Label::new(job).selectable(true).wrap());
+                                                                        let job =
+                                                                            create_rich_layout(
+                                                                                cell,
+                                                                                13.0,
+                                                                                Color32::from_rgb(
+                                                                                    220, 230, 245,
+                                                                                ),
+                                                                                false,
+                                                                                false,
+                                                                                col_w,
+                                                                            );
+                                                                        ui.add(
+                                                                            egui::Label::new(job)
+                                                                                .selectable(true)
+                                                                                .wrap(),
+                                                                        );
                                                                     },
                                                                 );
                                                             }
                                                             ui.end_row();
-
-                                                            // Data rows
-                                                            for row in &rows {
-                                                                for (c_idx, cell) in row.iter().enumerate() {
-                                                                    let col_w = col_widths.get(c_idx).copied().unwrap_or(120.0);
-                                                                    ui.allocate_ui_with_layout(
-                                                                        egui::Vec2::new(col_w, 0.0),
-                                                                        egui::Layout::top_down(egui::Align::LEFT),
-                                                                        |ui| {
-                                                                            ui.set_min_width(col_w);
-                                                                            ui.set_max_width(col_w);
-                                                                            let job = create_rich_layout(cell, 13.0, Color32::from_rgb(220, 230, 245), false, false, col_w);
-                                                                            ui.add(egui::Label::new(job).selectable(true).wrap());
-                                                                        },
-                                                                    );
-                                                                }
-                                                                ui.end_row();
-                                                            }
-                                                        });
+                                                        }
+                                                    });
                                                 });
                                         });
                                     ui.add_space(8.0);
                                 }
                                 TextBlock::Divider => {
                                     ui.add_space(6.0);
-                                    let (rect, _response) = ui.allocate_exact_size(egui::Vec2::new(base_wrap_width, 1.0), egui::Sense::hover());
-                                    ui.painter().rect_filled(rect, 0.0, Color32::from_rgb(45, 55, 75));
+                                    let (rect, _response) = ui.allocate_exact_size(
+                                        egui::Vec2::new(base_wrap_width, 1.0),
+                                        egui::Sense::hover(),
+                                    );
+                                    ui.painter().rect_filled(
+                                        rect,
+                                        0.0,
+                                        Color32::from_rgb(45, 55, 75),
+                                    );
                                     ui.add_space(6.0);
                                 }
                                 TextBlock::ListItem { bullet, text } => {
@@ -453,18 +556,35 @@ pub fn render_message_content(ui: &mut egui::Ui, text: &str) -> Option<(String, 
                                         &format!("  {}  ", bullet),
                                         0.0,
                                         egui::TextFormat {
-                                            font_id: egui::FontId::new(13.5, egui::FontFamily::Name("bold".into())),
+                                            font_id: egui::FontId::new(
+                                                13.5,
+                                                egui::FontFamily::Name("bold".into()),
+                                            ),
                                             color: Color32::from_rgb(96, 165, 250),
                                             ..Default::default()
                                         },
                                     );
 
-                                    append_rich_spans(&mut job, &text, 13.5, Color32::from_rgb(225, 232, 245), false, false);
+                                    append_rich_spans(
+                                        &mut job,
+                                        &text,
+                                        13.5,
+                                        Color32::from_rgb(225, 232, 245),
+                                        false,
+                                        false,
+                                    );
                                     ui.add(egui::Label::new(job).selectable(true).wrap());
                                     ui.add_space(3.0);
                                 }
                                 TextBlock::Paragraph(text) => {
-                                    let job = create_rich_layout(&text, 13.5, Color32::from_rgb(225, 232, 245), false, false, base_wrap_width);
+                                    let job = create_rich_layout(
+                                        &text,
+                                        13.5,
+                                        Color32::from_rgb(225, 232, 245),
+                                        false,
+                                        false,
+                                        base_wrap_width,
+                                    );
                                     ui.add(egui::Label::new(job).selectable(true).wrap());
                                     ui.add_space(4.0);
                                 }
@@ -527,8 +647,13 @@ pub fn render_message_content(ui: &mut egui::Ui, text: &str) -> Option<(String, 
 
                                                 // If language is executable, add "▶ Run" button!
                                                 let lower_lang = language.to_lowercase();
-                                                let is_python = lower_lang == "python" || lower_lang == "py";
-                                                let is_shell = lower_lang == "sh" || lower_lang == "bash" || lower_lang == "powershell" || lower_lang == "cmd" || lower_lang == "cargo";
+                                                let is_python =
+                                                    lower_lang == "python" || lower_lang == "py";
+                                                let is_shell = lower_lang == "sh"
+                                                    || lower_lang == "bash"
+                                                    || lower_lang == "powershell"
+                                                    || lower_lang == "cmd"
+                                                    || lower_lang == "cargo";
 
                                                 if is_python || is_shell {
                                                     ui.add_space(4.0);
@@ -536,22 +661,28 @@ pub fn render_message_content(ui: &mut egui::Ui, text: &str) -> Option<(String, 
                                                         egui::Button::new(
                                                             RichText::new("▶ Run")
                                                                 .monospace()
-                                                                .color(Color32::from_rgb(52, 211, 153))
+                                                                .color(Color32::from_rgb(
+                                                                    52, 211, 153,
+                                                                ))
                                                                 .strong()
                                                                 .size(11.0),
                                                         )
                                                         .fill(Color32::from_rgb(20, 36, 28))
-                                                        .stroke(Stroke::new(1.0, Color32::from_rgb(34, 197, 94)))
+                                                        .stroke(Stroke::new(
+                                                            1.0,
+                                                            Color32::from_rgb(34, 197, 94),
+                                                        ))
                                                         .rounding(Rounding::same(4.0)),
                                                     );
 
                                                     if run_btn.clicked() {
                                                         let tool_name = if is_python {
-                                                             "execute_python".to_string()
+                                                            "execute_python".to_string()
                                                         } else {
-                                                             "run_command".to_string()
+                                                            "run_command".to_string()
                                                         };
-                                                        executed_tool = Some((tool_name, code.clone()));
+                                                        executed_tool =
+                                                            Some((tool_name, code.clone()));
                                                     }
                                                 }
                                             },
@@ -589,7 +720,11 @@ pub fn render_message_content(ui: &mut egui::Ui, text: &str) -> Option<(String, 
     executed_tool
 }
 
-pub fn render_welcome_hero(ui: &mut egui::Ui, active_model: &str, server_url: &str) -> Option<String> {
+pub fn render_welcome_hero(
+    ui: &mut egui::Ui,
+    active_model: &str,
+    server_url: &str,
+) -> Option<String> {
     let mut selected_action = None;
 
     ui.vertical_centered(|ui| {

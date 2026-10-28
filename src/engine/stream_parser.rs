@@ -4,9 +4,7 @@ use regex::Regex;
 pub enum ParserState {
     Content,
     Thinking,
-    ToolDrafting {
-        tag_name: String,
-    },
+    ToolDrafting { tag_name: String },
 }
 
 pub struct StreamParser {
@@ -60,7 +58,9 @@ impl StreamParser {
 
                     // Avoid slicing incomplete tags like "<th", "<inv"
                     if let Some(last_lt) = self.buffer.rfind('<') {
-                        if !self.buffer[last_lt..].contains('>') && (think_pos.is_none() && tool_starts.is_empty()) {
+                        if !self.buffer[last_lt..].contains('>')
+                            && (think_pos.is_none() && tool_starts.is_empty())
+                        {
                             let clean = &self.buffer[..last_lt];
                             if !clean.is_empty() {
                                 let stripped = clean_tags(clean);
@@ -142,7 +142,9 @@ impl StreamParser {
                         }
                         self.state = ParserState::Content;
                         let after_think = &self.buffer[end_think + "</think>".len()..];
-                        self.buffer = after_think.trim_start_matches(|c| c == '\n' || c == '\r').to_string();
+                        self.buffer = after_think
+                            .trim_start_matches(|c| c == '\n' || c == '\r')
+                            .to_string();
                         continue;
                     } else {
                         // Avoid partial </think
@@ -167,7 +169,12 @@ impl StreamParser {
                 }
 
                 ParserState::ToolDrafting { tag_name: _ } => {
-                    let close_tags = ["</tool_call>", "</invoke>", "</function>", "</function_call>"];
+                    let close_tags = [
+                        "</tool_call>",
+                        "</invoke>",
+                        "</function>",
+                        "</function_call>",
+                    ];
                     let mut found_close: Option<(usize, &'static str)> = None;
 
                     for ct in &close_tags {
@@ -202,7 +209,9 @@ impl StreamParser {
 }
 
 fn clean_tags(text: &str) -> String {
-    if let Ok(re) = Regex::new(r"</?(?:tool_call|invoke|function|function_call|parameter|arguments|think)[^>]*>") {
+    if let Ok(re) = Regex::new(
+        r"</?(?:tool_call|invoke|function|function_call|parameter|arguments|think)[^>]*>",
+    ) {
         re.replace_all(text, "").to_string()
     } else {
         text.to_string()

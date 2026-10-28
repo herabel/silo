@@ -1,11 +1,11 @@
-use std::fs;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use chacha20poly1305::{
     aead::{Aead, KeyInit},
     ChaCha20Poly1305, Key, Nonce,
 };
 use shake_entropy::HardwareEntropyPool;
+use std::fs;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use zeroize::Zeroize;
 
 const MAGIC_HEADER: &[u8; 5] = b"SILO\x01";
@@ -45,7 +45,10 @@ impl VaultKey {
     pub fn encrypt(&self, data: &[u8]) -> Result<Vec<u8>, String> {
         let mut nonce_bytes = [0u8; 12];
         {
-            let mut pool = self.entropy_pool.lock().map_err(|e| format!("Entropy pool lock error: {}", e))?;
+            let mut pool = self
+                .entropy_pool
+                .lock()
+                .map_err(|e| format!("Entropy pool lock error: {}", e))?;
             pool.fill_bytes(&mut nonce_bytes);
         }
 
@@ -114,7 +117,7 @@ impl VaultManager {
         if self.key_file_path.exists() {
             let bytes = fs::read(&self.key_file_path)
                 .map_err(|e| format!("Failed to read key file: {}", e))?;
-            
+
             if bytes.len() >= 12 && &bytes[..12] == PASS_KEY_MAGIC {
                 return Err("Vault is protected by Master Password. Password required.".to_string());
             }
@@ -146,8 +149,8 @@ impl VaultManager {
 
     /// Unlock vault with Master Password
     pub fn unlock_with_password(&self, password: &str) -> Result<VaultKey, String> {
-        let bytes = fs::read(&self.key_file_path)
-            .map_err(|e| format!("Failed to read key file: {}", e))?;
+        let bytes =
+            fs::read(&self.key_file_path).map_err(|e| format!("Failed to read key file: {}", e))?;
 
         if bytes.len() < 12 + 32 + 12 + 48 || &bytes[..12] != PASS_KEY_MAGIC {
             return Err("Invalid or corrupted password-protected key file".to_string());
@@ -175,11 +178,18 @@ impl VaultManager {
     }
 
     /// Convert vault to use Master Password
-    pub fn set_master_password(&self, current_key: &VaultKey, password: &str) -> Result<(), String> {
+    pub fn set_master_password(
+        &self,
+        current_key: &VaultKey,
+        password: &str,
+    ) -> Result<(), String> {
         let mut salt = [0u8; 32];
         let mut nonce_bytes = [0u8; 12];
         {
-            let mut pool = current_key.entropy_pool.lock().map_err(|e| format!("Lock error: {}", e))?;
+            let mut pool = current_key
+                .entropy_pool
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?;
             pool.fill_bytes(&mut salt);
             pool.fill_bytes(&mut nonce_bytes);
         }
@@ -233,8 +243,8 @@ fn dirs_key_dir() -> PathBuf {
 
 fn derive_argon2_key(password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     use argon2::{Algorithm, Argon2, Params, Version};
-    let params = Params::new(65536, 3, 1, Some(32))
-        .map_err(|e| format!("Argon2 params error: {}", e))?;
+    let params =
+        Params::new(65536, 3, 1, Some(32)).map_err(|e| format!("Argon2 params error: {}", e))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     let mut out = [0u8; 32];

@@ -52,8 +52,8 @@ impl ChatImageAttachment {
     }
 
     pub fn from_image_bytes(bytes: &[u8]) -> Result<Self, String> {
-        let dynamic_img = image::load_from_memory(bytes)
-            .map_err(|e| format!("Failed to decode image: {}", e))?;
+        let dynamic_img =
+            image::load_from_memory(bytes).map_err(|e| format!("Failed to decode image: {}", e))?;
 
         let (dynamic_img, (w, h)) = if dynamic_img.width() > 1536 || dynamic_img.height() > 1536 {
             let resized = dynamic_img.resize(1536, 1536, image::imageops::FilterType::Lanczos3);
@@ -65,7 +65,8 @@ impl ChatImageAttachment {
         };
 
         let mut cursor = std::io::Cursor::new(Vec::new());
-        dynamic_img.write_to(&mut cursor, image::ImageFormat::Png)
+        dynamic_img
+            .write_to(&mut cursor, image::ImageFormat::Png)
             .map_err(|e| format!("Failed to encode PNG: {}", e))?;
         let png_bytes = cursor.into_inner();
         let byte_size = png_bytes.len();
@@ -85,14 +86,14 @@ impl ChatImageAttachment {
     }
 
     pub fn from_file_path(path: &Path) -> Result<Self, String> {
-        let bytes = fs::read(path)
-            .map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
+        let bytes =
+            fs::read(path).map_err(|e| format!("Failed to read file {}: {}", path.display(), e))?;
         Self::from_image_bytes(&bytes)
     }
 
     pub fn from_clipboard() -> Result<Self, String> {
-        let mut clipboard = arboard::Clipboard::new()
-            .map_err(|e| format!("Clipboard error: {}", e))?;
+        let mut clipboard =
+            arboard::Clipboard::new().map_err(|e| format!("Clipboard error: {}", e))?;
 
         // 1. Try native clipboard image
         if let Ok(img_data) = clipboard.get_image() {
@@ -100,10 +101,12 @@ impl ChatImageAttachment {
                 img_data.width as u32,
                 img_data.height as u32,
                 img_data.bytes.into_owned(),
-            ).ok_or_else(|| "Failed to construct RGBA image from clipboard buffer".to_string())?;
+            )
+            .ok_or_else(|| "Failed to construct RGBA image from clipboard buffer".to_string())?;
 
             let dynamic_img = image::DynamicImage::ImageRgba8(rgba_img);
-            let (dynamic_img, (w, h)) = if dynamic_img.width() > 1536 || dynamic_img.height() > 1536 {
+            let (dynamic_img, (w, h)) = if dynamic_img.width() > 1536 || dynamic_img.height() > 1536
+            {
                 let resized = dynamic_img.resize(1536, 1536, image::imageops::FilterType::Lanczos3);
                 let dims = (resized.width(), resized.height());
                 (resized, dims)
@@ -113,7 +116,8 @@ impl ChatImageAttachment {
             };
 
             let mut cursor = std::io::Cursor::new(Vec::new());
-            dynamic_img.write_to(&mut cursor, image::ImageFormat::Png)
+            dynamic_img
+                .write_to(&mut cursor, image::ImageFormat::Png)
                 .map_err(|e| format!("Failed to encode clipboard PNG: {}", e))?;
             let png_bytes = cursor.into_inner();
             let byte_size = png_bytes.len();
@@ -137,8 +141,15 @@ impl ChatImageAttachment {
             let trimmed = text.trim().trim_matches('"').trim();
             let p = Path::new(trimmed);
             if p.is_file() {
-                if let Some(ext) = p.extension().and_then(|e| e.to_str()).map(|s| s.to_lowercase()) {
-                    if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif") {
+                if let Some(ext) = p
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|s| s.to_lowercase())
+                {
+                    if matches!(
+                        ext.as_str(),
+                        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif"
+                    ) {
                         return Self::from_file_path(p);
                     }
                 }
@@ -335,7 +346,8 @@ impl Session {
                 let cleaned: String = if let Some(idx) = full_text.find("\n\n---\n\n") {
                     full_text[idx + 7..].trim().to_string()
                 } else if full_text.starts_with("DEEP RESEARCH DIRECTIVE:") {
-                    let lines: Vec<&str> = full_text.lines()
+                    let lines: Vec<&str> = full_text
+                        .lines()
                         .skip_while(|line| {
                             let t = line.trim();
                             t.starts_with("DEEP RESEARCH DIRECTIVE:")

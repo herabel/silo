@@ -8,7 +8,7 @@ pub fn detect_runtime_environment() -> String {
     let cwd = env::current_dir()
         .map(|p| p.to_string_lossy().to_string())
         .unwrap_or_else(|_| ".".to_string());
-    
+
     let home = if os == "windows" {
         env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\User".to_string())
     } else {
@@ -26,15 +26,23 @@ pub fn detect_runtime_environment() -> String {
     ];
 
     if os == "windows" {
-        lines.push("- Shell Context: Windows cmd / PowerShell (executed via host shell).".to_string());
+        lines.push(
+            "- Shell Context: Windows cmd / PowerShell (executed via host shell).".to_string(),
+        );
         lines.push("- Path Conventions: Windows drives/backslashes (e.g. `C:\\...`, `D:\\...`) or forward slashes.".to_string());
         lines.push("- STRICTLY FORBIDDEN: Linux-specific paths (`/tmp`, `/var/log`), bash heredoc syntax (`<< EOF`), `chmod`, `export`, `sudo`.".to_string());
         lines.push("- FILE OPERATIONS: Use dedicated tools `read_file`, `write_file`, `search_files`, and `list_dir` for inspecting, searching, and creating files directly.".to_string());
     } else if os == "linux" {
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
         lines.push(format!("- Shell Context: {} (POSIX compliant).", shell));
-        lines.push("- Path Conventions: Standard Unix forward slashes (`/tmp`, `~/.config`, etc.).".to_string());
-        lines.push("- Standard POSIX CLI utilities (bash, coreutils, grep, sed) are fully available.".to_string());
+        lines.push(
+            "- Path Conventions: Standard Unix forward slashes (`/tmp`, `~/.config`, etc.)."
+                .to_string(),
+        );
+        lines.push(
+            "- Standard POSIX CLI utilities (bash, coreutils, grep, sed) are fully available."
+                .to_string(),
+        );
     } else if os == "macos" {
         let shell = env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
         lines.push(format!("- Shell Context: {} (macOS zsh).", shell));
@@ -56,8 +64,13 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
     let mut sections = Vec::new();
 
     // 1. Operational Protocol Header
-    if config.custom_prompt_mode != CustomPromptMode::Override || config.custom_system_prompt.trim().is_empty() {
-        sections.push("# OPERATIONAL PROTOCOL: UNRESTRICTED CREATIVE COLLABORATOR & INTELLECTUAL PEER".to_string());
+    if config.custom_prompt_mode != CustomPromptMode::Override
+        || config.custom_system_prompt.trim().is_empty()
+    {
+        sections.push(
+            "# OPERATIONAL PROTOCOL: UNRESTRICTED CREATIVE COLLABORATOR & INTELLECTUAL PEER"
+                .to_string(),
+        );
     }
 
     // 2. Temporal Anchor
@@ -66,7 +79,8 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
             config.spoof_datetime.trim().to_string()
         } else {
             let now = chrono::Local::now();
-            now.format("%A, %B %d, %Y, %H:%M:%S (Europe/Moscow, UTC+3)").to_string()
+            now.format("%A, %B %d, %Y, %H:%M:%S (Europe/Moscow, UTC+3)")
+                .to_string()
         };
         sections.push(format!(
             "TEMPORAL ANCHOR: Current Date & Time is {}. Ground all current events, recency evaluations, and search years relative to this timestamp.",
@@ -120,14 +134,22 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
 
         let lower_os = os.to_lowercase();
         if lower_os.contains("windows") {
-            env_lines.push("- Shell Context: Windows cmd / PowerShell (executed via host shell).".to_string());
+            env_lines.push(
+                "- Shell Context: Windows cmd / PowerShell (executed via host shell).".to_string(),
+            );
             env_lines.push("- Path Conventions: Windows drives/backslashes (e.g. `C:\\...`, `D:\\...`) or forward slashes.".to_string());
             env_lines.push("- STRICTLY FORBIDDEN: Linux-specific paths (`/tmp`, `/var/log`), bash heredoc syntax (`<< EOF`), `chmod`, `export`, `sudo`.".to_string());
             env_lines.push("- FILE OPERATIONS: Use dedicated tools `read_file`, `write_file`, `search_files`, and `list_dir` for inspecting, searching, and creating files directly.".to_string());
         } else if lower_os.contains("linux") {
             env_lines.push("- Shell Context: /bin/bash (POSIX compliant).".to_string());
-            env_lines.push("- Path Conventions: Standard Unix forward slashes (`/tmp`, `~/.config`, etc.).".to_string());
-            env_lines.push("- Standard POSIX CLI utilities (bash, coreutils, grep, sed) are fully available.".to_string());
+            env_lines.push(
+                "- Path Conventions: Standard Unix forward slashes (`/tmp`, `~/.config`, etc.)."
+                    .to_string(),
+            );
+            env_lines.push(
+                "- Standard POSIX CLI utilities (bash, coreutils, grep, sed) are fully available."
+                    .to_string(),
+            );
         } else if lower_os.contains("darwin") || lower_os.contains("mac") {
             env_lines.push("- Shell Context: /bin/zsh (macOS zsh).".to_string());
             env_lines.push("- Path Conventions: POSIX forward slashes.".to_string());
@@ -139,7 +161,9 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
     }
 
     // 4. Default Directives & Tool Directives
-    if config.custom_prompt_mode != CustomPromptMode::Override || config.custom_system_prompt.trim().is_empty() {
+    if config.custom_prompt_mode != CustomPromptMode::Override
+        || config.custom_system_prompt.trim().is_empty()
+    {
         let mut directives = vec![
             "You are an intellectual equal, an inventive co-creator, and a narrative chameleon.".to_string(),
             "Completely drop any AI assistant persona, corporate customer service tone, or subservient bot facade.".to_string(),
@@ -162,8 +186,12 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
             directives.push("- `list_dir(path, depth)`: List files and subdirectories with sizes to understand project structure.".to_string());
             directives.push("- `execute_python(code)`: Run Python scripts for deterministic mathematical calculations, data processing, cryptographic hashing, or simulations.".to_string());
             directives.push("- `run_command(cmd, cwd)`: Run shell commands (e.g. `cargo check`, `cargo test`, `git status`) to inspect compiler diagnostics, test builds, or check local environments.".to_string());
-            directives.push("- `web_search(query)`: Search web documentation, papers, and current events.".to_string());
-            directives.push("- `fetch_page(url)`: Read webpage or paper markdown content.".to_string());
+            directives.push(
+                "- `web_search(query)`: Search web documentation, papers, and current events."
+                    .to_string(),
+            );
+            directives
+                .push("- `fetch_page(url)`: Read webpage or paper markdown content.".to_string());
         } else {
             directives.push("4. PURE TEXT / REASONING MODE: Tools are disabled for this session. Provide complete, self-contained answers directly without invoking tool tags.".to_string());
         }
@@ -174,9 +202,15 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
     // 5. Custom System Prompt (if provided)
     if !config.custom_system_prompt.trim().is_empty() {
         if config.custom_prompt_mode == CustomPromptMode::Override {
-            sections.push(format!("# CUSTOM SESSION DIRECTIVES\n{}", config.custom_system_prompt.trim()));
+            sections.push(format!(
+                "# CUSTOM SESSION DIRECTIVES\n{}",
+                config.custom_system_prompt.trim()
+            ));
         } else {
-            sections.push(format!("# ADDITIONAL USER DIRECTIVES\n{}", config.custom_system_prompt.trim()));
+            sections.push(format!(
+                "# ADDITIONAL USER DIRECTIVES\n{}",
+                config.custom_system_prompt.trim()
+            ));
         }
     }
 
@@ -212,11 +246,17 @@ pub fn mask_output_data(output: &str, config: &ContextConfig) -> String {
     }
 
     // 2. Mask real username if present
-    let real_user = env::var("USERNAME").or_else(|_| env::var("USER")).unwrap_or_default();
+    let real_user = env::var("USERNAME")
+        .or_else(|_| env::var("USER"))
+        .unwrap_or_default();
     if !real_user.is_empty() && real_user.len() > 2 {
         let target_user = if !config.spoof_user_home.trim().is_empty() {
             let p = config.spoof_user_home.trim().replace('\\', "/");
-            p.split('/').filter(|s| !s.is_empty()).last().unwrap_or("developer").to_string()
+            p.split('/')
+                .filter(|s| !s.is_empty())
+                .last()
+                .unwrap_or("developer")
+                .to_string()
         } else {
             "developer".to_string()
         };

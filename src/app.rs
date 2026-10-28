@@ -1,16 +1,18 @@
 use crate::engine::{
-    execute_tool, fetch_available_models, stream_completion, strip_tool_tags, ModelInfo, StreamUpdate,
+    execute_tool, fetch_available_models, stream_completion, strip_tool_tags, ModelInfo,
+    StreamUpdate,
 };
 use crate::runtime_env::{build_configured_system_prompt, mask_output_data};
 use crate::session::{
-    ChatImageAttachment, ChatMessage, ContextConfig, CustomPromptMode, MessageRole, Session, SessionManager, ToolCallRecord, ToolStatus,
+    ChatImageAttachment, ChatMessage, ContextConfig, CustomPromptMode, MessageRole, Session,
+    SessionManager, ToolCallRecord, ToolStatus,
 };
 use crate::ui_render::{render_message_content, render_welcome_hero};
-use eframe::egui::{Pos2, Rect, self, Color32, Frame, Margin, RichText, Rounding, Stroke, Vec2};
+use eframe::egui::{self, Color32, Frame, Margin, Pos2, Rect, RichText, Rounding, Stroke, Vec2};
+use std::path::PathBuf;
 use tokio::runtime::Handle;
 use tokio::sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender};
 use tokio_util::sync::CancellationToken;
-use std::path::PathBuf;
 
 const FONT_INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 const FONT_INTER_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
@@ -140,16 +142,21 @@ impl SiloApp {
         );
 
         // Proportional (UI text)
-        fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().splice(
-            0..0,
-            vec!["inter_regular".to_owned(), "inter_semibold".to_owned()],
-        );
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .splice(
+                0..0,
+                vec!["inter_regular".to_owned(), "inter_semibold".to_owned()],
+            );
 
         // Monospace (Code, Terminal, Statuses)
-        fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().splice(
-            0..0,
-            vec!["jetbrains_mono".to_owned()],
-        );
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap()
+            .splice(0..0, vec!["jetbrains_mono".to_owned()]);
 
         // Bold
         fonts.families.insert(
@@ -159,13 +166,30 @@ impl SiloApp {
 
         // System symbol fallbacks
         if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\seguisym.ttf") {
-            fonts.font_data.insert("segoe_sym".to_owned(), egui::FontData::from_owned(data).into());
-            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().push("segoe_sym".to_owned());
-            fonts.families.get_mut(&egui::FontFamily::Monospace).unwrap().push("segoe_sym".to_owned());
+            fonts.font_data.insert(
+                "segoe_sym".to_owned(),
+                egui::FontData::from_owned(data).into(),
+            );
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Proportional)
+                .unwrap()
+                .push("segoe_sym".to_owned());
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Monospace)
+                .unwrap()
+                .push("segoe_sym".to_owned());
         }
         if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\arial.ttf") {
-            fonts.font_data.insert("arial".to_owned(), egui::FontData::from_owned(data).into());
-            fonts.families.get_mut(&egui::FontFamily::Proportional).unwrap().push("arial".to_owned());
+            fonts
+                .font_data
+                .insert("arial".to_owned(), egui::FontData::from_owned(data).into());
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Proportional)
+                .unwrap()
+                .push("arial".to_owned());
         }
         cc.egui_ctx.set_fonts(fonts);
 
@@ -176,11 +200,26 @@ impl SiloApp {
         style.spacing.scroll.bar_width = 5.0;
 
         let mut text_styles = std::collections::BTreeMap::new();
-        text_styles.insert(egui::TextStyle::Heading, egui::FontId::new(16.0, egui::FontFamily::Name("bold".into())));
-        text_styles.insert(egui::TextStyle::Body, egui::FontId::new(13.5, egui::FontFamily::Proportional));
-        text_styles.insert(egui::TextStyle::Monospace, egui::FontId::new(12.0, egui::FontFamily::Monospace));
-        text_styles.insert(egui::TextStyle::Button, egui::FontId::new(12.5, egui::FontFamily::Proportional));
-        text_styles.insert(egui::TextStyle::Small, egui::FontId::new(11.0, egui::FontFamily::Proportional));
+        text_styles.insert(
+            egui::TextStyle::Heading,
+            egui::FontId::new(16.0, egui::FontFamily::Name("bold".into())),
+        );
+        text_styles.insert(
+            egui::TextStyle::Body,
+            egui::FontId::new(13.5, egui::FontFamily::Proportional),
+        );
+        text_styles.insert(
+            egui::TextStyle::Monospace,
+            egui::FontId::new(12.0, egui::FontFamily::Monospace),
+        );
+        text_styles.insert(
+            egui::TextStyle::Button,
+            egui::FontId::new(12.5, egui::FontFamily::Proportional),
+        );
+        text_styles.insert(
+            egui::TextStyle::Small,
+            egui::FontId::new(11.0, egui::FontFamily::Proportional),
+        );
         style.text_styles = text_styles;
         cc.egui_ctx.set_style(style);
 
@@ -354,7 +393,8 @@ impl SiloApp {
                     if let Some(idx) = sess.messages.iter().position(|m| m.id == msg_id) {
                         sess.messages.truncate(idx + 1);
                         sess.updated_at = chrono::Utc::now();
-                        status_update = Some(format!("Rewound conversation to checkpoint #{}", idx + 1));
+                        status_update =
+                            Some(format!("Rewound conversation to checkpoint #{}", idx + 1));
                     }
                 }
                 RollbackTarget::RegenerateAssistant(msg_id) => {
@@ -449,7 +489,11 @@ impl SiloApp {
             } else {
                 code_or_topic
             };
-            (effective, Some(CALC_DIRECTIVE), Some("execute_python".to_string()))
+            (
+                effective,
+                Some(CALC_DIRECTIVE),
+                Some("execute_python".to_string()),
+            )
         } else if is_run {
             let cmd_or_topic = raw_text[4..].trim().to_string();
             let effective = if cmd_or_topic.is_empty() {
@@ -457,7 +501,11 @@ impl SiloApp {
             } else {
                 cmd_or_topic
             };
-            (effective, Some(RUN_DIRECTIVE), Some("run_command".to_string()))
+            (
+                effective,
+                Some(RUN_DIRECTIVE),
+                Some("run_command".to_string()),
+            )
         } else if raw_text.is_empty() && !images.is_empty() {
             ("Please analyze the attached image.".to_string(), None, None)
         } else {
@@ -480,7 +528,8 @@ impl SiloApp {
             } else {
                 user_text
             };
-            sess.messages.push(ChatMessage::user_with_images(&final_user_text, images));
+            sess.messages
+                .push(ChatMessage::user_with_images(&final_user_text, images));
             sess.update_title_from_first_message();
             sess.updated_at = chrono::Utc::now();
         }
@@ -521,7 +570,11 @@ impl SiloApp {
 
         let forced_tool = self.forced_tool.take();
         let base_url = self.server_url.clone();
-        let api_key = if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) };
+        let api_key = if self.api_key.trim().is_empty() {
+            None
+        } else {
+            Some(self.api_key.trim().to_string())
+        };
 
         self.tokio_handle.spawn(async move {
             stream_completion(
@@ -563,10 +616,8 @@ impl SiloApp {
 
         self.pending_tool_calls = vec![tc.clone()];
         if let Some(sess) = self.active_session_mut() {
-            let mut assistant_msg = ChatMessage::assistant(
-                format!("Running `{}`...", tool_name),
-                None,
-            );
+            let mut assistant_msg =
+                ChatMessage::assistant(format!("Running `{}`...", tool_name), None);
             assistant_msg.tool_calls.push(tc);
             sess.messages.push(assistant_msg);
         }
@@ -615,7 +666,11 @@ impl SiloApp {
                     StreamUpdate::Payload(p) => {
                         self.last_request_payload = Some(p);
                     }
-                    StreamUpdate::Finished { full_content, full_thinking, tool_calls } => {
+                    StreamUpdate::Finished {
+                        full_content,
+                        full_thinking,
+                        tool_calls,
+                    } => {
                         finished = true;
                         final_content = full_content;
                         final_thinking = full_thinking;
@@ -648,7 +703,8 @@ impl SiloApp {
                 if let Some(err) = has_error {
                     self.status_message = format!("Error: {}", err);
                     if let Some(sess) = self.active_session_mut() {
-                        sess.messages.push(ChatMessage::assistant(format!("⚠️ {}", err), None));
+                        sess.messages
+                            .push(ChatMessage::assistant(format!("⚠️ {}", err), None));
                     }
                     self.save_active_session();
                 } else {
@@ -668,9 +724,11 @@ impl SiloApp {
 
                     // If the model already produced a substantive final answer / dossier, do not loop on trailing citations
                     let trimmed_c = content.trim();
-                    let is_full_report = trimmed_c.len() > 600 && (
-                        trimmed_c.contains('#') || trimmed_c.contains("|---|") || trimmed_c.contains("1.") || trimmed_c.contains("##")
-                    );
+                    let is_full_report = trimmed_c.len() > 600
+                        && (trimmed_c.contains('#')
+                            || trimmed_c.contains("|---|")
+                            || trimmed_c.contains("1.")
+                            || trimmed_c.contains("##"));
                     if is_full_report {
                         self.pending_tool_calls.clear();
                     }
@@ -689,24 +747,39 @@ impl SiloApp {
                     } else {
                         let trimmed = content.trim();
                         let lower_c = trimmed.to_lowercase();
-                        let is_transitional = self.is_deep_active && self.transitional_nudge_count < 5 && !trimmed.is_empty() && (
-                            trimmed.len() < 700 && (
-                                !trimmed.contains('#')
-                                || lower_c.contains("запрос") || lower_c.contains("поищ") || lower_c.contains("ищу")
-                                || lower_c.contains("дополн") || lower_c.contains("провер") || lower_c.contains("изуч")
-                                || lower_c.contains("переход") || lower_c.contains("соберу") || lower_c.contains("собираю")
-                                || lower_c.contains("сейчас") || lower_c.contains("найду") || lower_c.contains("запускаю")
-                                || lower_c.contains("search") || lower_c.contains("fetch") || lower_c.contains("query")
-                                || lower_c.contains("look into") || lower_c.contains("let me") || lower_c.contains("investigate")
-                                || lower_c.contains("параллельно") || lower_c.contains("отправляю") || lower_c.contains("читаю")
-                            )
-                        );
+                        let is_transitional = self.is_deep_active
+                            && self.transitional_nudge_count < 5
+                            && !trimmed.is_empty()
+                            && (trimmed.len() < 700
+                                && (!trimmed.contains('#')
+                                    || lower_c.contains("запрос")
+                                    || lower_c.contains("поищ")
+                                    || lower_c.contains("ищу")
+                                    || lower_c.contains("дополн")
+                                    || lower_c.contains("провер")
+                                    || lower_c.contains("изуч")
+                                    || lower_c.contains("переход")
+                                    || lower_c.contains("соберу")
+                                    || lower_c.contains("собираю")
+                                    || lower_c.contains("сейчас")
+                                    || lower_c.contains("найду")
+                                    || lower_c.contains("запускаю")
+                                    || lower_c.contains("search")
+                                    || lower_c.contains("fetch")
+                                    || lower_c.contains("query")
+                                    || lower_c.contains("look into")
+                                    || lower_c.contains("let me")
+                                    || lower_c.contains("investigate")
+                                    || lower_c.contains("параллельно")
+                                    || lower_c.contains("отправляю")
+                                    || lower_c.contains("читаю")));
 
                         if is_transitional {
                             self.transitional_nudge_count += 1;
                             let fetch_count = self.deep_fetch_count;
                             if let Some(sess) = self.active_session_mut() {
-                                sess.messages.push(ChatMessage::assistant(&content, thinking));
+                                sess.messages
+                                    .push(ChatMessage::assistant(&content, thinking));
                                 if fetch_count < MAX_DEEP_FETCHES {
                                     sess.messages.push(ChatMessage::system("[CRITICAL RESEARCH DIRECTIVE]: Do NOT output conversational filler or statements of intent (such as 'Let me fetch...', 'I will look into...'). You MUST IMMEDIATELY invoke `web_search(query)` or `fetch_page(url)` as a structured tool call. If all research is truly finished, output the final dossier immediately."));
                                 } else {
@@ -730,7 +803,8 @@ impl SiloApp {
                                 if th.trim().len() > 100 && self.empty_recovery_count < 2 {
                                     self.empty_recovery_count += 1;
                                     if let Some(sess) = self.active_session_mut() {
-                                        sess.messages.push(ChatMessage::assistant("", Some(th.clone())));
+                                        sess.messages
+                                            .push(ChatMessage::assistant("", Some(th.clone())));
                                         sess.messages.push(ChatMessage::system(
                                             "[SYNTHESIZE DOSSIER]: Your internal reasoning and evidence gathering are complete. Now write the exhaustive, definitive final markdown dossier to the user immediately. Present all findings, model specifications, VRAM math, tokens/second, and concrete links. Do NOT call any more tools and do NOT output conversational filler."
                                         ));
@@ -749,7 +823,9 @@ impl SiloApp {
                         // If model returned 0-2 tokens (empty response) right after receiving tool output,
                         // do not emit a dead failure note — inject recovery directive and continue synthesis.
                         let was_after_tool = self.active_session().map_or(false, |sess| {
-                            sess.messages.last().map_or(false, |m| m.role == MessageRole::Tool)
+                            sess.messages
+                                .last()
+                                .map_or(false, |m| m.role == MessageRole::Tool)
                         });
 
                         if trimmed.is_empty() && was_after_tool && self.empty_recovery_count < 2 {
@@ -771,7 +847,10 @@ impl SiloApp {
                             if let Some(th) = &thinking {
                                 let th_trim = th.trim();
                                 if !th_trim.is_empty() {
-                                    format!("{}\n\n*(Rendered from model reasoning trace)*", th_trim)
+                                    format!(
+                                        "{}\n\n*(Rendered from model reasoning trace)*",
+                                        th_trim
+                                    )
                                 } else {
                                     "*(Model returned an empty response. Try rewording or regenerating.)*".to_string()
                                 }
@@ -783,7 +862,8 @@ impl SiloApp {
                         };
 
                         if let Some(sess) = self.active_session_mut() {
-                            sess.messages.push(ChatMessage::assistant(&final_content, thinking));
+                            sess.messages
+                                .push(ChatMessage::assistant(&final_content, thinking));
                             sess.updated_at = chrono::Utc::now();
                         }
                         self.save_active_session();
@@ -798,7 +878,11 @@ impl SiloApp {
     }
 
     pub fn execute_next_tool(&mut self) {
-        let tool = match self.pending_tool_calls.iter_mut().find(|t| t.status == ToolStatus::Pending) {
+        let tool = match self
+            .pending_tool_calls
+            .iter_mut()
+            .find(|t| t.status == ToolStatus::Pending)
+        {
             Some(t) => {
                 t.status = ToolStatus::Running;
                 t.clone()
@@ -835,8 +919,15 @@ impl SiloApp {
         });
     }
 
-    pub fn on_tool_completed(&mut self, tool_id: String, tool_name: String, ok: bool, output: String) {
-        self.process_logs.push(format!("[Tool {}]:\n{}", tool_name, output));
+    pub fn on_tool_completed(
+        &mut self,
+        tool_id: String,
+        tool_name: String,
+        ok: bool,
+        output: String,
+    ) {
+        self.process_logs
+            .push(format!("[Tool {}]:\n{}", tool_name, output));
 
         let effective_output = if let Some(sess) = self.active_session() {
             mask_output_data(&output, &sess.context_config)
@@ -845,7 +936,11 @@ impl SiloApp {
         };
 
         if let Some(tc) = self.pending_tool_calls.iter_mut().find(|t| t.id == tool_id) {
-            tc.status = if ok { ToolStatus::Success } else { ToolStatus::Failed };
+            tc.status = if ok {
+                ToolStatus::Success
+            } else {
+                ToolStatus::Failed
+            };
             tc.output = Some(effective_output.clone());
         }
 
@@ -853,7 +948,10 @@ impl SiloApp {
             if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
                 format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", effective_output, MAX_DEEP_FETCHES - self.deep_fetch_count)
             } else {
-                format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.", effective_output)
+                format!(
+                    "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
+                    effective_output
+                )
             }
         } else if tool_name == "fetch_page" || tool_name == "fetch" {
             self.deep_fetch_count += 1;
@@ -879,7 +977,11 @@ impl SiloApp {
             for msg in sess.messages.iter_mut().rev() {
                 if msg.role == MessageRole::Assistant {
                     if let Some(tc) = msg.tool_calls.iter_mut().find(|t| t.id == tool_id) {
-                        tc.status = if ok { ToolStatus::Success } else { ToolStatus::Failed };
+                        tc.status = if ok {
+                            ToolStatus::Success
+                        } else {
+                            ToolStatus::Failed
+                        };
                         tc.output = Some(effective_output.clone());
                         break;
                     }
@@ -891,7 +993,10 @@ impl SiloApp {
         self.save_active_session();
 
         // Check if there are more pending tools in this turn
-        let has_more = self.pending_tool_calls.iter().any(|t| t.status == ToolStatus::Pending);
+        let has_more = self
+            .pending_tool_calls
+            .iter()
+            .any(|t| t.status == ToolStatus::Pending);
         if has_more {
             self.execute_next_tool();
         } else {
@@ -923,9 +1028,11 @@ impl eframe::App for SiloApp {
                         );
                         ui.add_space(8.0);
                         ui.label(
-                            RichText::new("Encrypted local store (XChaCha20-Poly1305 + shake-entropy)")
-                                .size(12.5)
-                                .color(Color32::from_rgb(148, 163, 184)),
+                            RichText::new(
+                                "Encrypted local store (XChaCha20-Poly1305 + shake-entropy)",
+                            )
+                            .size(12.5)
+                            .color(Color32::from_rgb(148, 163, 184)),
                         );
                         ui.add_space(24.0);
 
@@ -952,12 +1059,21 @@ impl eframe::App for SiloApp {
 
                         ui.add_space(14.0);
 
-                        if ui.add_sized([160.0, 34.0], egui::Button::new(RichText::new("🔓  Unlock Vault").strong())).clicked() {
+                        if ui
+                            .add_sized(
+                                [160.0, 34.0],
+                                egui::Button::new(RichText::new("🔓  Unlock Vault").strong()),
+                            )
+                            .clicked()
+                        {
                             submit = true;
                         }
 
                         if submit {
-                            match self.vault_manager.unlock_with_password(&self.master_password_input) {
+                            match self
+                                .vault_manager
+                                .unlock_with_password(&self.master_password_input)
+                            {
                                 Ok(key) => {
                                     self.session_manager.set_vault_key(key);
                                     self.sessions = self.session_manager.load_all_sessions();
@@ -983,7 +1099,11 @@ impl eframe::App for SiloApp {
 
                         if let Some(err) = &self.password_error {
                             ui.add_space(12.0);
-                            ui.label(RichText::new(format!("⚠ {}", err)).color(Color32::from_rgb(248, 113, 113)).size(12.5));
+                            ui.label(
+                                RichText::new(format!("⚠ {}", err))
+                                    .color(Color32::from_rgb(248, 113, 113))
+                                    .size(12.5),
+                            );
                         }
                     });
                 });
@@ -995,16 +1115,23 @@ impl eframe::App for SiloApp {
         if !dropped_files.is_empty() {
             for file in dropped_files {
                 if let Some(path) = file.path {
-                    let is_img = path.extension()
+                    let is_img = path
+                        .extension()
                         .and_then(|e| e.to_str())
-                        .map(|ext| matches!(ext.to_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif"))
+                        .map(|ext| {
+                            matches!(
+                                ext.to_lowercase().as_str(),
+                                "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif"
+                            )
+                        })
                         .unwrap_or(false);
                     if is_img {
                         self.attach_image_from_path(&path);
                     }
                 } else if let Some(bytes) = file.bytes {
                     if let Ok(att) = ChatImageAttachment::from_image_bytes(&bytes) {
-                        self.status_message = format!("Attached dropped image ({}x{} px)", att.width, att.height);
+                        self.status_message =
+                            format!("Attached dropped image ({}x{} px)", att.width, att.height);
                         self.staged_images.push(att);
                     }
                 }
@@ -1016,7 +1143,8 @@ impl eframe::App for SiloApp {
             if let Ok(att) = ChatImageAttachment::from_clipboard() {
                 let dims = format!("{}x{}", att.width, att.height);
                 let kb = att.byte_size / 1024;
-                self.status_message = format!("Pasted image from clipboard ({} px, {} KB)", dims, kb);
+                self.status_message =
+                    format!("Pasted image from clipboard ({} px, {} KB)", dims, kb);
                 self.staged_images.push(att);
             }
         }
@@ -1039,7 +1167,8 @@ impl eframe::App for SiloApp {
                             self.selected_model = first.id.clone();
                         }
                     }
-                    self.server_status_msg = Some(format!("Connected! Found {} model(s).", models.len()));
+                    self.server_status_msg =
+                        Some(format!("Connected! Found {} model(s).", models.len()));
                     self.available_models = models;
                 } else {
                     self.server_status_msg = Some("Connection check returned 0 models (host unreachable or invalid endpoint).".to_string());
@@ -1073,12 +1202,27 @@ impl eframe::App for SiloApp {
                         let term_btn = ui.add(
                             egui::Button::new(
                                 RichText::new(term_text)
-                                    .color(if self.show_process_panel { Color32::from_rgb(96, 165, 250) } else { Color32::from_rgb(148, 163, 184) })
-                                    .size(11.5)
+                                    .color(if self.show_process_panel {
+                                        Color32::from_rgb(96, 165, 250)
+                                    } else {
+                                        Color32::from_rgb(148, 163, 184)
+                                    })
+                                    .size(11.5),
                             )
-                            .fill(if self.show_process_panel { Color32::from_rgb(22, 32, 50) } else { Color32::from_rgb(17, 21, 30) })
-                            .stroke(Stroke::new(1.0, if self.show_process_panel { Color32::from_rgb(59, 130, 246) } else { Color32::from_rgb(30, 37, 52) }))
-                            .rounding(Rounding::same(6.0))
+                            .fill(if self.show_process_panel {
+                                Color32::from_rgb(22, 32, 50)
+                            } else {
+                                Color32::from_rgb(17, 21, 30)
+                            })
+                            .stroke(Stroke::new(
+                                1.0,
+                                if self.show_process_panel {
+                                    Color32::from_rgb(59, 130, 246)
+                                } else {
+                                    Color32::from_rgb(30, 37, 52)
+                                },
+                            ))
+                            .rounding(Rounding::same(6.0)),
                         );
                         if term_btn.clicked() {
                             self.show_process_panel = !self.show_process_panel;
@@ -1092,7 +1236,7 @@ impl eframe::App for SiloApp {
                                 egui::TextEdit::singleline(&mut self.selected_model)
                                     .desired_width(190.0)
                                     .font(egui::TextStyle::Monospace)
-                                    .hint_text("model-name...")
+                                    .hint_text("model-name..."),
                             );
                             if re.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                 self.editing_model_inline = false;
@@ -1103,7 +1247,7 @@ impl eframe::App for SiloApp {
                                     RichText::new(&self.selected_model)
                                         .color(Color32::from_rgb(52, 211, 153))
                                         .monospace()
-                                        .size(11.5)
+                                        .size(11.5),
                                 )
                                 .show_ui(ui, |ui| {
                                     for m in &self.available_models {
@@ -1112,7 +1256,11 @@ impl eframe::App for SiloApp {
                                         } else {
                                             format!("○ {}", m.id)
                                         };
-                                        ui.selectable_value(&mut self.selected_model, m.id.clone(), label);
+                                        ui.selectable_value(
+                                            &mut self.selected_model,
+                                            m.id.clone(),
+                                            label,
+                                        );
                                     }
                                 });
                         } else {
@@ -1121,11 +1269,11 @@ impl eframe::App for SiloApp {
                                     RichText::new(&self.selected_model)
                                         .color(Color32::from_rgb(52, 211, 153))
                                         .monospace()
-                                        .size(11.5)
+                                        .size(11.5),
                                 )
                                 .fill(Color32::from_rgb(17, 21, 30))
                                 .stroke(Stroke::new(1.0, Color32::from_rgb(30, 37, 52)))
-                                .rounding(Rounding::same(6.0))
+                                .rounding(Rounding::same(6.0)),
                             );
                             if lbl.clicked() {
                                 self.editing_model_inline = true;
@@ -1133,12 +1281,20 @@ impl eframe::App for SiloApp {
                         }
 
                         // Toggle Text Edit / Dropdown mode
-                        let edit_icon = if self.editing_model_inline { "✔" } else { "✏" };
+                        let edit_icon = if self.editing_model_inline {
+                            "✔"
+                        } else {
+                            "✏"
+                        };
                         let edit_btn = ui.add(
-                            egui::Button::new(RichText::new(edit_icon).color(Color32::from_rgb(148, 163, 184)).size(11.0))
-                                .fill(Color32::from_rgb(17, 21, 30))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(30, 37, 52)))
-                                .rounding(Rounding::same(4.0))
+                            egui::Button::new(
+                                RichText::new(edit_icon)
+                                    .color(Color32::from_rgb(148, 163, 184))
+                                    .size(11.0),
+                            )
+                            .fill(Color32::from_rgb(17, 21, 30))
+                            .stroke(Stroke::new(1.0, Color32::from_rgb(30, 37, 52)))
+                            .rounding(Rounding::same(4.0)),
                         );
                         if edit_btn.clicked() {
                             self.editing_model_inline = !self.editing_model_inline;
@@ -1147,9 +1303,14 @@ impl eframe::App for SiloApp {
                         ui.add_space(6.0);
 
                         // Server / Host Settings Button
-                        let host_text = if self.server_url.contains("127.0.0.1") || self.server_url.contains("localhost") {
+                        let host_text = if self.server_url.contains("127.0.0.1")
+                            || self.server_url.contains("localhost")
+                        {
                             if let Some(port_idx) = self.server_url.rfind(':') {
-                                format!("🌐 :{}", &self.server_url[port_idx+1..].trim_end_matches('/'))
+                                format!(
+                                    "🌐 :{}",
+                                    &self.server_url[port_idx + 1..].trim_end_matches('/')
+                                )
                             } else {
                                 "🌐 Local".to_string()
                             }
@@ -1160,13 +1321,28 @@ impl eframe::App for SiloApp {
                         let host_btn = ui.add(
                             egui::Button::new(
                                 RichText::new(host_text)
-                                    .color(if self.show_server_modal { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) })
+                                    .color(if self.show_server_modal {
+                                        Color32::from_rgb(56, 189, 248)
+                                    } else {
+                                        Color32::from_rgb(148, 163, 184)
+                                    })
                                     .monospace()
-                                    .size(11.5)
+                                    .size(11.5),
                             )
-                            .fill(if self.show_server_modal { Color32::from_rgb(16, 28, 44) } else { Color32::from_rgb(17, 21, 30) })
-                            .stroke(Stroke::new(1.0, if self.show_server_modal { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(30, 37, 52) }))
-                            .rounding(Rounding::same(6.0))
+                            .fill(if self.show_server_modal {
+                                Color32::from_rgb(16, 28, 44)
+                            } else {
+                                Color32::from_rgb(17, 21, 30)
+                            })
+                            .stroke(Stroke::new(
+                                1.0,
+                                if self.show_server_modal {
+                                    Color32::from_rgb(56, 189, 248)
+                                } else {
+                                    Color32::from_rgb(30, 37, 52)
+                                },
+                            ))
+                            .rounding(Rounding::same(6.0)),
                         );
                         if host_btn.clicked() {
                             self.show_server_modal = !self.show_server_modal;
@@ -1182,7 +1358,11 @@ impl eframe::App for SiloApp {
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(Margin::symmetric(8.0, 3.0))
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new("⚡ Working").color(Color32::from_rgb(251, 191, 36)).size(11.0));
+                                    ui.label(
+                                        RichText::new("⚡ Working")
+                                            .color(Color32::from_rgb(251, 191, 36))
+                                            .size(11.0),
+                                    );
                                 });
                         } else {
                             Frame::none()
@@ -1191,7 +1371,11 @@ impl eframe::App for SiloApp {
                                 .rounding(Rounding::same(6.0))
                                 .inner_margin(Margin::symmetric(8.0, 3.0))
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new("● Ready").color(Color32::from_rgb(52, 211, 153)).size(11.0));
+                                    ui.label(
+                                        RichText::new("● Ready")
+                                            .color(Color32::from_rgb(52, 211, 153))
+                                            .size(11.0),
+                                    );
                                 });
                         }
 
@@ -1200,27 +1384,48 @@ impl eframe::App for SiloApp {
                         // Left group inside remaining available space
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                             // Sidebar toggle button
-                            let toggle_icon = if self.show_sidebar { "◧ Sidebar" } else { "◨ Sidebar" };
-                            if ui.add(
-                                egui::Button::new(RichText::new(toggle_icon).color(Color32::from_rgb(148, 163, 184)).size(11.5))
+                            let toggle_icon = if self.show_sidebar {
+                                "◧ Sidebar"
+                            } else {
+                                "◨ Sidebar"
+                            };
+                            if ui
+                                .add(
+                                    egui::Button::new(
+                                        RichText::new(toggle_icon)
+                                            .color(Color32::from_rgb(148, 163, 184))
+                                            .size(11.5),
+                                    )
                                     .fill(Color32::from_rgb(17, 21, 30))
                                     .stroke(Stroke::new(1.0, Color32::from_rgb(30, 37, 52)))
                                     .rounding(Rounding::same(6.0)),
-                            ).clicked() {
+                                )
+                                .clicked()
+                            {
                                 self.show_sidebar = !self.show_sidebar;
                             }
 
                             ui.add_space(10.0);
 
                             // Modern Linear/Raycast Branding (Neutral, clean, multi-model runtime)
-                            ui.label(RichText::new("◈  SILO").color(Color32::from_rgb(248, 250, 252)).strong().size(13.0));
+                            ui.label(
+                                RichText::new("◈  SILO")
+                                    .color(Color32::from_rgb(248, 250, 252))
+                                    .strong()
+                                    .size(13.0),
+                            );
                             Frame::none()
                                 .fill(Color32::from_rgb(19, 23, 34))
                                 .stroke(Stroke::new(1.0, Color32::from_rgb(32, 40, 58)))
                                 .rounding(Rounding::same(4.0))
                                 .inner_margin(Margin::symmetric(6.0, 2.0))
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new("LOCAL RUNTIME").color(Color32::from_rgb(148, 163, 184)).size(9.5).strong());
+                                    ui.label(
+                                        RichText::new("LOCAL RUNTIME")
+                                            .color(Color32::from_rgb(148, 163, 184))
+                                            .size(9.5)
+                                            .strong(),
+                                    );
                                 });
 
                             ui.add_space(10.0);
@@ -1230,7 +1435,13 @@ impl eframe::App for SiloApp {
                                 let rem_w = ui.available_width();
                                 let max_chars = ((rem_w - 200.0).max(40.0) / 7.5) as usize;
                                 let title_display = if sess.title.chars().count() > max_chars {
-                                    format!("{}...", sess.title.chars().take(max_chars.saturating_sub(2)).collect::<String>())
+                                    format!(
+                                        "{}...",
+                                        sess.title
+                                            .chars()
+                                            .take(max_chars.saturating_sub(2))
+                                            .collect::<String>()
+                                    )
                                 } else {
                                     sess.title.clone()
                                 };
@@ -1240,7 +1451,11 @@ impl eframe::App for SiloApp {
                                     .rounding(Rounding::same(6.0))
                                     .inner_margin(Margin::symmetric(8.0, 3.0))
                                     .show(ui, |ui| {
-                                        ui.label(RichText::new(title_display).color(Color32::from_rgb(203, 213, 225)).size(11.5));
+                                        ui.label(
+                                            RichText::new(title_display)
+                                                .color(Color32::from_rgb(203, 213, 225))
+                                                .size(11.5),
+                                        );
                                     });
 
                                 ui.add_space(6.0);
@@ -1248,12 +1463,31 @@ impl eframe::App for SiloApp {
                                 let is_deep = sess.is_deep_research;
                                 let deep_btn = ui.add(
                                     egui::Button::new(
-                                        RichText::new(if is_deep { "🔬 Deep: ON" } else { "🔬 Deep: OFF" })
-                                            .color(if is_deep { Color32::from_rgb(192, 132, 252) } else { Color32::from_rgb(148, 163, 184) })
-                                            .size(11.0)
+                                        RichText::new(if is_deep {
+                                            "🔬 Deep: ON"
+                                        } else {
+                                            "🔬 Deep: OFF"
+                                        })
+                                        .color(if is_deep {
+                                            Color32::from_rgb(192, 132, 252)
+                                        } else {
+                                            Color32::from_rgb(148, 163, 184)
+                                        })
+                                        .size(11.0),
                                     )
-                                    .fill(if is_deep { Color32::from_rgb(36, 18, 48) } else { Color32::from_rgb(17, 21, 30) })
-                                    .stroke(Stroke::new(1.0, if is_deep { Color32::from_rgb(147, 51, 234) } else { Color32::from_rgb(30, 37, 52) }))
+                                    .fill(if is_deep {
+                                        Color32::from_rgb(36, 18, 48)
+                                    } else {
+                                        Color32::from_rgb(17, 21, 30)
+                                    })
+                                    .stroke(Stroke::new(
+                                        1.0,
+                                        if is_deep {
+                                            Color32::from_rgb(147, 51, 234)
+                                        } else {
+                                            Color32::from_rgb(30, 37, 52)
+                                        },
+                                    ))
                                     .rounding(Rounding::same(6.0)),
                                 );
                                 if deep_btn.clicked() {
@@ -1280,11 +1514,26 @@ impl eframe::App for SiloApp {
                                 let ctx_btn = ui.add(
                                     egui::Button::new(
                                         RichText::new(ctx_label)
-                                            .color(if is_spoofed { Color32::from_rgb(251, 191, 36) } else { Color32::from_rgb(148, 163, 184) })
-                                            .size(11.0)
+                                            .color(if is_spoofed {
+                                                Color32::from_rgb(251, 191, 36)
+                                            } else {
+                                                Color32::from_rgb(148, 163, 184)
+                                            })
+                                            .size(11.0),
                                     )
-                                    .fill(if is_spoofed { Color32::from_rgb(36, 28, 16) } else { Color32::from_rgb(17, 21, 30) })
-                                    .stroke(Stroke::new(1.0, if is_spoofed { Color32::from_rgb(245, 158, 11) } else { Color32::from_rgb(30, 37, 52) }))
+                                    .fill(if is_spoofed {
+                                        Color32::from_rgb(36, 28, 16)
+                                    } else {
+                                        Color32::from_rgb(17, 21, 30)
+                                    })
+                                    .stroke(Stroke::new(
+                                        1.0,
+                                        if is_spoofed {
+                                            Color32::from_rgb(245, 158, 11)
+                                        } else {
+                                            Color32::from_rgb(30, 37, 52)
+                                        },
+                                    ))
                                     .rounding(Rounding::same(6.0)),
                                 );
                                 if ctx_btn.clicked() {
@@ -1295,9 +1544,17 @@ impl eframe::App for SiloApp {
                                 let is_vault_locked = self.vault_manager.is_password_protected();
                                 let vault_btn = ui.add(
                                     egui::Button::new(
-                                        RichText::new(if is_vault_locked { "🔐 Vault" } else { "🔒 Vault" })
-                                            .color(if is_vault_locked { Color32::from_rgb(74, 222, 128) } else { Color32::from_rgb(56, 189, 248) })
-                                            .size(11.0)
+                                        RichText::new(if is_vault_locked {
+                                            "🔐 Vault"
+                                        } else {
+                                            "🔒 Vault"
+                                        })
+                                        .color(if is_vault_locked {
+                                            Color32::from_rgb(74, 222, 128)
+                                        } else {
+                                            Color32::from_rgb(56, 189, 248)
+                                        })
+                                        .size(11.0),
                                     )
                                     .fill(Color32::from_rgb(17, 21, 30))
                                     .stroke(Stroke::new(1.0, Color32::from_rgb(30, 37, 52)))
@@ -1383,132 +1640,154 @@ impl eframe::App for SiloApp {
                     ui.separator();
                     ui.add_space(6.0);
 
-                    egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-                        let filter = self.session_filter.to_lowercase();
-                        let active_id = self.active_session_id.clone();
-                        let mut to_switch = None;
-                        let mut to_delete = None;
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            let filter = self.session_filter.to_lowercase();
+                            let active_id = self.active_session_id.clone();
+                            let mut to_switch = None;
+                            let mut to_delete = None;
 
-                        let total_w = ui.available_width();
+                            let total_w = ui.available_width();
 
-                        for sess in &self.sessions {
-                            if !filter.is_empty() && !sess.title.to_lowercase().contains(&filter) {
-                                continue;
-                            }
+                            for sess in &self.sessions {
+                                if !filter.is_empty()
+                                    && !sess.title.to_lowercase().contains(&filter)
+                                {
+                                    continue;
+                                }
 
-                            let is_active = Some(&sess.id) == active_id.as_ref();
-                            let card_size = Vec2::new(total_w, 36.0);
-                            let (rect, resp) = ui.allocate_exact_size(card_size, egui::Sense::click());
+                                let is_active = Some(&sess.id) == active_id.as_ref();
+                                let card_size = Vec2::new(total_w, 36.0);
+                                let (rect, resp) =
+                                    ui.allocate_exact_size(card_size, egui::Sense::click());
 
-                            let is_hovered = resp.hovered();
+                                let is_hovered = resp.hovered();
 
-                            let bg_color = if is_active {
-                                Color32::from_rgb(26, 34, 52)
-                            } else if is_hovered {
-                                Color32::from_rgb(20, 25, 36)
-                            } else {
-                                Color32::from_rgb(14, 17, 25)
-                            };
+                                let bg_color = if is_active {
+                                    Color32::from_rgb(26, 34, 52)
+                                } else if is_hovered {
+                                    Color32::from_rgb(20, 25, 36)
+                                } else {
+                                    Color32::from_rgb(14, 17, 25)
+                                };
 
-                            let border_stroke = if is_active {
-                                Stroke::new(1.0, Color32::from_rgb(59, 130, 246))
-                            } else if is_hovered {
-                                Stroke::new(1.0, Color32::from_rgb(38, 48, 70))
-                            } else {
-                                Stroke::new(1.0, Color32::from_rgb(24, 29, 41))
-                            };
+                                let border_stroke = if is_active {
+                                    Stroke::new(1.0, Color32::from_rgb(59, 130, 246))
+                                } else if is_hovered {
+                                    Stroke::new(1.0, Color32::from_rgb(38, 48, 70))
+                                } else {
+                                    Stroke::new(1.0, Color32::from_rgb(24, 29, 41))
+                                };
 
-                            let painter = ui.painter();
-                            painter.rect(rect, Rounding::same(6.0), bg_color, border_stroke);
+                                let painter = ui.painter();
+                                painter.rect(rect, Rounding::same(6.0), bg_color, border_stroke);
 
-                            let icon = if sess.title.to_lowercase().contains("deep") {
-                                "🔬"
-                            } else if sess.title.to_lowercase().contains("cargo") || sess.title.to_lowercase().contains("run") {
-                                "💻"
-                            } else {
-                                "💬"
-                            };
+                                let icon = if sess.title.to_lowercase().contains("deep") {
+                                    "🔬"
+                                } else if sess.title.to_lowercase().contains("cargo")
+                                    || sess.title.to_lowercase().contains("run")
+                                {
+                                    "💻"
+                                } else {
+                                    "💬"
+                                };
 
-                            // Draw icon
-                            let icon_pos = Pos2::new(rect.left() + 9.0, rect.center().y - 7.0);
-                            painter.text(
-                                icon_pos,
-                                egui::Align2::LEFT_CENTER,
-                                icon,
-                                egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                                Color32::from_rgb(148, 163, 184),
-                            );
-
-                            // Title text with strict boundary
-                            let text_pos = Pos2::new(rect.left() + 29.0, rect.center().y);
-                            let text_color = if is_active {
-                                Color32::from_rgb(248, 250, 252)
-                            } else if is_hovered {
-                                Color32::from_rgb(203, 213, 225)
-                            } else {
-                                Color32::from_rgb(148, 163, 184)
-                            };
-
-                            let max_title_chars = ((total_w - 60.0) / 7.5).max(10.0) as usize;
-                            let title_text = if sess.title.chars().count() > max_title_chars {
-                                format!("{}...", sess.title.chars().take(max_title_chars.saturating_sub(2)).collect::<String>())
-                            } else {
-                                sess.title.clone()
-                            };
-
-                            painter.text(
-                                text_pos,
-                                egui::Align2::LEFT_CENTER,
-                                title_text,
-                                egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                                text_color,
-                            );
-
-                            // Delete button: fixed 18px from right edge
-                            let del_rect = Rect::from_center_size(
-                                Pos2::new(rect.right() - 15.0, rect.center().y),
-                                Vec2::new(18.0, 18.0),
-                            );
-                            let del_resp = ui.interact(del_rect, ui.id().with(&sess.id).with("del"), egui::Sense::click());
-                            if del_resp.hovered() {
-                                painter.rect_filled(del_rect, Rounding::same(4.0), Color32::from_rgb(45, 20, 25));
+                                // Draw icon
+                                let icon_pos = Pos2::new(rect.left() + 9.0, rect.center().y - 7.0);
                                 painter.text(
-                                    del_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "✕",
-                                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                                    Color32::from_rgb(248, 113, 113),
+                                    icon_pos,
+                                    egui::Align2::LEFT_CENTER,
+                                    icon,
+                                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                                    Color32::from_rgb(148, 163, 184),
                                 );
-                            } else if is_hovered || is_active {
+
+                                // Title text with strict boundary
+                                let text_pos = Pos2::new(rect.left() + 29.0, rect.center().y);
+                                let text_color = if is_active {
+                                    Color32::from_rgb(248, 250, 252)
+                                } else if is_hovered {
+                                    Color32::from_rgb(203, 213, 225)
+                                } else {
+                                    Color32::from_rgb(148, 163, 184)
+                                };
+
+                                let max_title_chars = ((total_w - 60.0) / 7.5).max(10.0) as usize;
+                                let title_text = if sess.title.chars().count() > max_title_chars {
+                                    format!(
+                                        "{}...",
+                                        sess.title
+                                            .chars()
+                                            .take(max_title_chars.saturating_sub(2))
+                                            .collect::<String>()
+                                    )
+                                } else {
+                                    sess.title.clone()
+                                };
+
                                 painter.text(
-                                    del_rect.center(),
-                                    egui::Align2::CENTER_CENTER,
-                                    "✕",
-                                    egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                                    Color32::from_rgb(100, 116, 139),
+                                    text_pos,
+                                    egui::Align2::LEFT_CENTER,
+                                    title_text,
+                                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                                    text_color,
                                 );
+
+                                // Delete button: fixed 18px from right edge
+                                let del_rect = Rect::from_center_size(
+                                    Pos2::new(rect.right() - 15.0, rect.center().y),
+                                    Vec2::new(18.0, 18.0),
+                                );
+                                let del_resp = ui.interact(
+                                    del_rect,
+                                    ui.id().with(&sess.id).with("del"),
+                                    egui::Sense::click(),
+                                );
+                                if del_resp.hovered() {
+                                    painter.rect_filled(
+                                        del_rect,
+                                        Rounding::same(4.0),
+                                        Color32::from_rgb(45, 20, 25),
+                                    );
+                                    painter.text(
+                                        del_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        "✕",
+                                        egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                                        Color32::from_rgb(248, 113, 113),
+                                    );
+                                } else if is_hovered || is_active {
+                                    painter.text(
+                                        del_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        "✕",
+                                        egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                                        Color32::from_rgb(100, 116, 139),
+                                    );
+                                }
+
+                                if del_resp.clicked() {
+                                    to_delete = Some(sess.id.clone());
+                                } else if resp.clicked() {
+                                    to_switch = Some(sess.id.clone());
+                                }
+
+                                ui.add_space(3.0);
                             }
 
-                            if del_resp.clicked() {
-                                to_delete = Some(sess.id.clone());
-                            } else if resp.clicked() {
-                                to_switch = Some(sess.id.clone());
+                            if let Some(id) = to_switch {
+                                self.switch_session(id);
                             }
-
-                            ui.add_space(3.0);
-                        }
-
-                        if let Some(id) = to_switch {
-                            self.switch_session(id);
-                        }
-                        if let Some(id) = to_delete {
-                            self.session_manager.delete_session(&id);
-                            self.sessions.retain(|s| s.id != id);
-                            if self.active_session_id.as_deref() == Some(&id) {
-                                self.active_session_id = self.sessions.first().map(|s| s.id.clone());
+                            if let Some(id) = to_delete {
+                                self.session_manager.delete_session(&id);
+                                self.sessions.retain(|s| s.id != id);
+                                if self.active_session_id.as_deref() == Some(&id) {
+                                    self.active_session_id =
+                                        self.sessions.first().map(|s| s.id.clone());
+                                }
                             }
-                        }
-                    });
+                        });
                 });
         }
 
@@ -1784,7 +2063,6 @@ impl eframe::App for SiloApp {
                                                                 ui.vertical(|ui| {
                                                                     ui.horizontal(|ui| {
                                                                         ui.label(RichText::new("👤 You").color(Color32::from_rgb(147, 197, 253)).strong().size(12.0));
-                                                                        
                                                                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                                                             let is_confirm_edit = self.confirm_rollback.as_deref() == Some(&format!("edit_{}", msg.id));
                                                                             let edit_text = if is_confirm_edit { "⚠️ Confirm Edit?" } else { "✏️ Edit" };

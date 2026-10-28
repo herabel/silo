@@ -136,7 +136,9 @@ pub fn parse_fn_call_arguments(fn_name: &str, raw_args: &str) -> String {
     }
 
     // Match query: "...", query="...", code: "...", cmd: "...", etc.
-    if let Ok(re) = Regex::new(r#"(?s)(?:query|url|code|cmd|path|pattern)\s*[:=]\s*["'](.*?)["'](?:\s*,\s*|\s*$)"#) {
+    if let Ok(re) = Regex::new(
+        r#"(?s)(?:query|url|code|cmd|path|pattern)\s*[:=]\s*["'](.*?)["'](?:\s*,\s*|\s*$)"#,
+    ) {
         if let Some(cap) = re.captures(raw) {
             let val = cap[1].to_string();
             return match fn_name {
@@ -172,9 +174,6 @@ pub fn parse_fn_call_arguments(fn_name: &str, raw_args: &str) -> String {
     clean_and_normalize_tool_arguments(fn_name, raw)
 }
 
-
-
-
 pub fn strip_residual_tags(s: &str) -> String {
     let t = s.trim();
     let mut cleaned = t.to_string();
@@ -187,7 +186,9 @@ pub fn strip_residual_tags(s: &str) -> String {
             let lower = cleaned.to_lowercase();
             let lower_close = close_tag.to_lowercase();
             if lower.ends_with(&lower_close) {
-                cleaned = cleaned[first_gt + 1..cleaned.len() - close_tag.len()].trim().to_string();
+                cleaned = cleaned[first_gt + 1..cleaned.len() - close_tag.len()]
+                    .trim()
+                    .to_string();
             }
         }
     }
@@ -198,7 +199,10 @@ pub fn strip_residual_tags(s: &str) -> String {
     }
 
     // 3. Strip key= or key: prefixes (e.g. "path=...", "url=...", "query=...")
-    let prefixes = ["path=", "path:", "url=", "url:", "query=", "query:", "q=", "q:", "pattern=", "pattern:", "cmd=", "cmd:", "code=", "code:"];
+    let prefixes = [
+        "path=", "path:", "url=", "url:", "query=", "query:", "q=", "q:", "pattern=", "pattern:",
+        "cmd=", "cmd:", "code=", "code:",
+    ];
     for p in &prefixes {
         let lower = cleaned.to_lowercase();
         if lower.starts_with(p) {
@@ -208,7 +212,9 @@ pub fn strip_residual_tags(s: &str) -> String {
     }
 
     // 4. Strip quotes
-    if (cleaned.starts_with('"') && cleaned.ends_with('"')) || (cleaned.starts_with('\'') && cleaned.ends_with('\'')) {
+    if (cleaned.starts_with('"') && cleaned.ends_with('"'))
+        || (cleaned.starts_with('\'') && cleaned.ends_with('\''))
+    {
         if cleaned.len() >= 2 {
             cleaned = cleaned[1..cleaned.len() - 1].trim().to_string();
         }
@@ -216,7 +222,6 @@ pub fn strip_residual_tags(s: &str) -> String {
 
     cleaned
 }
-
 
 pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> String {
     let raw_trimmed = raw_args.trim();
@@ -364,7 +369,20 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
     let clean_input = clean_input.trim();
 
     // 4. Parse known XML parameter tags without backreferences: <path>...</path>, <content>...</content>
-    let known_tags = ["path", "content", "pattern", "query", "q", "url", "code", "cmd", "command", "start_line", "end_line", "depth"];
+    let known_tags = [
+        "path",
+        "content",
+        "pattern",
+        "query",
+        "q",
+        "url",
+        "code",
+        "cmd",
+        "command",
+        "start_line",
+        "end_line",
+        "depth",
+    ];
     let lower_input_for_xml = clean_input.to_lowercase();
     let mut args_map = serde_json::Map::new();
     let mut found_xml_params = false;
@@ -374,7 +392,8 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         let close_tag = format!("</{}>", tag);
         if let Some(start_idx) = lower_input_for_xml.find(&open_tag) {
             let val_start = start_idx + open_tag.len();
-            let val_end = if let Some(close_idx) = lower_input_for_xml[val_start..].find(&close_tag) {
+            let val_end = if let Some(close_idx) = lower_input_for_xml[val_start..].find(&close_tag)
+            {
                 val_start + close_idx
             } else {
                 clean_input.len()
@@ -402,7 +421,8 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         if norm_name == "search_files" && !args_map.contains_key("path") {
             args_map.insert("path".to_string(), Value::String(".".to_string()));
         }
-        return serde_json::to_string(&Value::Object(args_map)).unwrap_or_else(|_| "{}".to_string());
+        return serde_json::to_string(&Value::Object(args_map))
+            .unwrap_or_else(|_| "{}".to_string());
     }
 
     // 5. Key-Value parameter lines: key=val or key: val (e.g. path=...\ncontent=...)
@@ -422,10 +442,15 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                 };
                 let raw_val = clean_input[start_idx..end_idx].trim();
                 let mut clean_val = raw_val.to_string();
-                if (clean_val.starts_with('"') && clean_val.ends_with('"')) || (clean_val.starts_with('\'') && clean_val.ends_with('\'')) {
+                if (clean_val.starts_with('"') && clean_val.ends_with('"'))
+                    || (clean_val.starts_with('\'') && clean_val.ends_with('\''))
+                {
                     if clean_val.len() >= 2 {
                         clean_val = clean_val[1..clean_val.len() - 1].to_string();
-                        clean_val = clean_val.replace("\\n", "\n").replace("\\t", "\t").replace("\\\"", "\"");
+                        clean_val = clean_val
+                            .replace("\\n", "\n")
+                            .replace("\\t", "\t")
+                            .replace("\\\"", "\"");
                     }
                 }
                 if key != "code" && key != "content" {
@@ -473,7 +498,8 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                 if norm_name == "search_files" && !kv_map.contains_key("path") {
                     kv_map.insert("path".to_string(), Value::String(".".to_string()));
                 }
-                return serde_json::to_string(&Value::Object(kv_map)).unwrap_or_else(|_| "{}".to_string());
+                return serde_json::to_string(&Value::Object(kv_map))
+                    .unwrap_or_else(|_| "{}".to_string());
             }
         }
     }
@@ -513,17 +539,28 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
     serde_json::to_string(&Value::Object(fallback_map)).unwrap_or_else(|_| "{}".to_string())
 }
 
-
-
 pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
     let mut calls = Vec::new();
 
     // Format 00: Direct tool tags, e.g. <search_files>...</search_files>, <write_file>...</write_file>, etc.
     let direct_tools = [
-        "read_file", "readfile", "write_file", "writefile",
-        "search_files", "searchfiles", "list_dir", "listdir",
-        "execute_python", "python", "run_command", "cmd", "bash",
-        "web_search", "websearch", "fetch_page", "fetchpage"
+        "read_file",
+        "readfile",
+        "write_file",
+        "writefile",
+        "search_files",
+        "searchfiles",
+        "list_dir",
+        "listdir",
+        "execute_python",
+        "python",
+        "run_command",
+        "cmd",
+        "bash",
+        "web_search",
+        "websearch",
+        "fetch_page",
+        "fetchpage",
     ];
     let lower_text = text.to_lowercase();
     for &tool_tag in &direct_tools {
@@ -532,11 +569,12 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
         let mut cursor = 0;
         while let Some(start_pos) = lower_text[cursor..].find(&open_tag) {
             let abs_start = cursor + start_pos + open_tag.len();
-            let (abs_end, next_cursor) = if let Some(end_pos) = lower_text[abs_start..].find(&close_tag) {
-                (abs_start + end_pos, abs_start + end_pos + close_tag.len())
-            } else {
-                (text.len(), text.len())
-            };
+            let (abs_end, next_cursor) =
+                if let Some(end_pos) = lower_text[abs_start..].find(&close_tag) {
+                    (abs_start + end_pos, abs_start + end_pos + close_tag.len())
+                } else {
+                    (text.len(), text.len())
+                };
             let raw_body = text[abs_start..abs_end].trim();
             cursor = next_cursor;
 
@@ -550,7 +588,8 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                 "websearch" => "web_search",
                 "fetchpage" => "fetch_page",
                 _ => tool_tag,
-            }.to_string();
+            }
+            .to_string();
 
             let norm_args = clean_and_normalize_tool_arguments(&norm_name, raw_body);
             calls.push(ToolCallInfo {
@@ -566,7 +605,9 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
     }
 
     // Format 0: Function call with parens e.g. <function=web_search(query: "...") or web_search(query="...") inside <tool_call>
-    if let Ok(fn_call_re) = Regex::new(r#"(?s)(?:<function=|\b)(web_search|search|fetch_page|fetch|execute_python|python|run_command|cmd|read_file|read|write_file|write|list_dir|ls|dir|search_files|grep|search_code)\s*\((.*?)\)(?:>|\s*</parameter>|\s*</function>|\s*</tool_call>|$)"#) {
+    if let Ok(fn_call_re) = Regex::new(
+        r#"(?s)(?:<function=|\b)(web_search|search|fetch_page|fetch|execute_python|python|run_command|cmd|read_file|read|write_file|write|list_dir|ls|dir|search_files|grep|search_code)\s*\((.*?)\)(?:>|\s*</parameter>|\s*</function>|\s*</tool_call>|$)"#,
+    ) {
         for cap in fn_call_re.captures_iter(text) {
             let fn_name = cap[1].to_string();
             let raw_args = cap[2].trim();
@@ -580,7 +621,8 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                 "ls" | "dir" => "list_dir",
                 "grep" | "search_code" => "search_files",
                 other => other,
-            }.to_string();
+            }
+            .to_string();
             let args_json = parse_fn_call_arguments(&norm_name, raw_args);
             calls.push(ToolCallInfo {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -595,13 +637,17 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
     }
 
     // Format A: <invoke name="..."> <parameter name="..."> ... </invoke> (Anthropic / Qwen format)
-    if let Ok(inv_re) = Regex::new(r#"(?s)<invoke\s+name=["']?([a-zA-Z0-9_]+)["']?>(.*?)(?:</invoke>|$)"#) {
+    if let Ok(inv_re) =
+        Regex::new(r#"(?s)<invoke\s+name=["']?([a-zA-Z0-9_]+)["']?>(.*?)(?:</invoke>|$)"#)
+    {
         for cap in inv_re.captures_iter(text) {
             let fn_name = cap[1].to_string();
             let raw_body = cap[2].trim();
             let mut args = json!({});
 
-            if let Ok(param_re) = Regex::new(r#"(?s)<parameter\s+name=["']?([a-zA-Z0-9_]+)["']?>(.*?)(?:</parameter>|$)"#) {
+            if let Ok(param_re) = Regex::new(
+                r#"(?s)<parameter\s+name=["']?([a-zA-Z0-9_]+)["']?>(.*?)(?:</parameter>|$)"#,
+            ) {
                 let mut found_params = false;
                 for pcap in param_re.captures_iter(raw_body) {
                     found_params = true;
@@ -612,13 +658,23 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                         clean_val = clean_val[..pos].to_string();
                     }
                     clean_val = clean_val.trim().to_string();
-                    if clean_val.to_lowercase().starts_with("query:\n") || clean_val.to_lowercase().starts_with("query: ") {
+                    if clean_val.to_lowercase().starts_with("query:\n")
+                        || clean_val.to_lowercase().starts_with("query: ")
+                    {
                         clean_val = clean_val[6..].trim().to_string();
-                    } else if clean_val.to_lowercase().starts_with("url:\n") || clean_val.to_lowercase().starts_with("url: ") {
+                    } else if clean_val.to_lowercase().starts_with("url:\n")
+                        || clean_val.to_lowercase().starts_with("url: ")
+                    {
                         clean_val = clean_val[4..].trim().to_string();
                     }
                     if let Some(inner) = relaxed_json_parse(&clean_val) {
-                        if let Some(inner_q) = inner.get("query").or_else(|| inner.get("q")).or_else(|| inner.get("code")).or_else(|| inner.get("cmd")).or_else(|| inner.get("url")) {
+                        if let Some(inner_q) = inner
+                            .get("query")
+                            .or_else(|| inner.get("q"))
+                            .or_else(|| inner.get("code"))
+                            .or_else(|| inner.get("cmd"))
+                            .or_else(|| inner.get("url"))
+                        {
                             if let Some(s) = inner_q.as_str() {
                                 clean_val = s.to_string();
                             }
@@ -702,7 +758,11 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
         for cap in tc_re.captures_iter(text) {
             let raw = cap[1].trim();
             if let Some(val) = relaxed_json_parse(raw) {
-                let name = val.get("name").and_then(|n| n.as_str()).unwrap_or("execute_python").to_string();
+                let name = val
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("execute_python")
+                    .to_string();
                 let args_str = if let Some(a) = val.get("arguments") {
                     if a.is_string() {
                         a.as_str().unwrap().to_string()
@@ -736,7 +796,9 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
     }
 
     // Format D: Markdown code blocks with JSON tool calls
-    if let Ok(block_re) = Regex::new(r#"(?s)```(?:json|tool_call|tool)?\s*(\{\s*"name"\s*:\s*".*?\})\s*```"#) {
+    if let Ok(block_re) =
+        Regex::new(r#"(?s)```(?:json|tool_call|tool)?\s*(\{\s*"name"\s*:\s*".*?\})\s*```"#)
+    {
         for cap in block_re.captures_iter(text) {
             let raw = cap[1].trim();
             if let Some(val) = relaxed_json_parse(raw) {
@@ -791,7 +853,9 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
     // Format F: Extract bare markdown code blocks ONLY if the model emitted exclusively a code block without text explanation
     if calls.is_empty() {
         let trimmed_text = text.trim();
-        let is_bare_code = trimmed_text.starts_with("```") && trimmed_text.ends_with("```") && trimmed_text.len() < 2500;
+        let is_bare_code = trimmed_text.starts_with("```")
+            && trimmed_text.ends_with("```")
+            && trimmed_text.len() < 2500;
         if is_bare_code {
             if let Ok(py_re) = Regex::new(r#"(?s)^```(?:python|py)\s*\n(.*?)```$"#) {
                 if let Some(cap) = py_re.captures(trimmed_text) {
@@ -804,7 +868,9 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                         });
                     }
                 }
-            } else if let Ok(sh_re) = Regex::new(r#"(?s)^```(?:bash|sh|powershell|cmd)\s*\n(.*?)```$"#) {
+            } else if let Ok(sh_re) =
+                Regex::new(r#"(?s)^```(?:bash|sh|powershell|cmd)\s*\n(.*?)```$"#)
+            {
                 if let Some(cap) = sh_re.captures(trimmed_text) {
                     let cmd_body = cap[1].trim();
                     if !cmd_body.is_empty() {
@@ -824,10 +890,30 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
 
 pub fn strip_tool_tags(text: &str) -> String {
     let tag_names = [
-        "read_file", "readfile", "write_file", "writefile", "search_files", "searchfiles",
-        "list_dir", "listdir", "execute_python", "python", "run_command", "cmd", "bash",
-        "web_search", "websearch", "fetch_page", "fetchpage", "tool_call", "function",
-        "invoke", "parameter", "function_call", "arguments", "think"
+        "read_file",
+        "readfile",
+        "write_file",
+        "writefile",
+        "search_files",
+        "searchfiles",
+        "list_dir",
+        "listdir",
+        "execute_python",
+        "python",
+        "run_command",
+        "cmd",
+        "bash",
+        "web_search",
+        "websearch",
+        "fetch_page",
+        "fetchpage",
+        "tool_call",
+        "function",
+        "invoke",
+        "parameter",
+        "function_call",
+        "arguments",
+        "think",
     ];
     let mut cleaned = text.to_string();
 
@@ -1048,7 +1134,7 @@ pub fn build_tool_definitions() -> Vec<Value> {
                     "required": ["pattern"]
                 }
             }
-        })
+        }),
     ]
 }
 
@@ -1087,7 +1173,9 @@ pub async fn stream_completion(
 
     // Find index of the last assistant message that has substantive text content
     let last_text_assistant_idx = messages.iter().rposition(|m| {
-        m.role == MessageRole::Assistant && !m.content.trim().is_empty() && !m.content.trim().starts_with("⚠️")
+        m.role == MessageRole::Assistant
+            && !m.content.trim().is_empty()
+            && !m.content.trim().starts_with("⚠️")
     });
 
     for (idx, m) in messages.iter().enumerate() {
@@ -1144,7 +1232,8 @@ pub async fn stream_completion(
                     continue;
                 }
 
-                let is_superseded = last_text_assistant_idx.map_or(false, |last_idx| idx < last_idx);
+                let is_superseded =
+                    last_text_assistant_idx.map_or(false, |last_idx| idx < last_idx);
 
                 if is_superseded {
                     if !trimmed.is_empty() {
@@ -1190,12 +1279,19 @@ pub async fn stream_completion(
                 }
             }
             MessageRole::Tool => {
-                let is_superseded = last_text_assistant_idx.map_or(false, |last_idx| idx < last_idx);
+                let is_superseded =
+                    last_text_assistant_idx.map_or(false, |last_idx| idx < last_idx);
                 if !is_superseded {
-                    let call_id = m.tool_call_id.clone().unwrap_or_else(|| "call_default".to_string());
+                    let call_id = m
+                        .tool_call_id
+                        .clone()
+                        .unwrap_or_else(|| "call_default".to_string());
                     // Context safety: truncate oversized tool output (e.g. huge HTML dumps) so prompt doesn't exhaust model n_ctx
                     let safe_content = if m.content.chars().count() > 3500 {
-                        format!("{}...\n[Tool output truncated for context conservation]", m.content.chars().take(3200).collect::<String>())
+                        format!(
+                            "{}...\n[Tool output truncated for context conservation]",
+                            m.content.chars().take(3200).collect::<String>()
+                        )
                     } else {
                         m.content.clone()
                     };
@@ -1218,7 +1314,9 @@ pub async fn stream_completion(
         if is_user && content_str.is_some() {
             let cur_text = content_str.unwrap();
             if let Some(prev) = normalized_messages.last_mut() {
-                if prev.get("role").and_then(|r| r.as_str()) == Some("user") && prev.get("content").and_then(|c| c.as_str()).is_some() {
+                if prev.get("role").and_then(|r| r.as_str()) == Some("user")
+                    && prev.get("content").and_then(|c| c.as_str()).is_some()
+                {
                     let prev_text = prev["content"].as_str().unwrap().to_string();
                     let merged = format!("{}\n\n{}", prev_text, cur_text);
                     prev["content"] = Value::String(merged);
@@ -1239,7 +1337,10 @@ pub async fn stream_completion(
         let c_len = if let Some(s) = msg.get("content").and_then(|c| c.as_str()) {
             s.len()
         } else if let Some(arr) = msg.get("content").and_then(|c| c.as_array()) {
-            arr.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).map(|s| s.len()).sum()
+            arr.iter()
+                .filter_map(|p| p.get("text").and_then(|t| t.as_str()))
+                .map(|s| s.len())
+                .sum()
         } else {
             0
         };
@@ -1255,10 +1356,13 @@ pub async fn stream_completion(
     // Ensure the conversation always starts with a user role message for template compliance
     if let Some(first) = governed_messages.first() {
         if first.get("role").and_then(|r| r.as_str()) != Some("user") {
-            governed_messages.insert(0, json!({
-                "role": "user",
-                "content": "[Context continuation from earlier conversation turns]"
-            }));
+            governed_messages.insert(
+                0,
+                json!({
+                    "role": "user",
+                    "content": "[Context continuation from earlier conversation turns]"
+                }),
+            );
         }
     }
 
@@ -1287,16 +1391,30 @@ pub async fn stream_completion(
     if enable_tools {
         let tools = if let Some(tool_name) = &forced_tool {
             let all = build_tool_definitions();
-            let filtered: Vec<Value> = all.into_iter().filter(|t| {
-                t.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()) == Some(tool_name.as_str())
-            }).collect();
-            if filtered.is_empty() { build_tool_definitions() } else { filtered }
+            let filtered: Vec<Value> = all
+                .into_iter()
+                .filter(|t| {
+                    t.get("function")
+                        .and_then(|f| f.get("name"))
+                        .and_then(|n| n.as_str())
+                        == Some(tool_name.as_str())
+                })
+                .collect();
+            if filtered.is_empty() {
+                build_tool_definitions()
+            } else {
+                filtered
+            }
         } else {
             build_tool_definitions()
         };
 
         body["tools"] = Value::Array(tools);
-        body["tool_choice"] = Value::String(if forced_tool.is_some() { "required".to_string() } else { "auto".to_string() });
+        body["tool_choice"] = Value::String(if forced_tool.is_some() {
+            "required".to_string()
+        } else {
+            "auto".to_string()
+        });
     }
 
     if let Ok(pretty) = serde_json::to_string_pretty(&body) {
@@ -1305,14 +1423,19 @@ pub async fn stream_completion(
 
     let start_time = std::time::Instant::now();
     let num_tools = if enable_tools {
-        body.get("tools").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(0)
+        body.get("tools")
+            .and_then(|t| t.as_array())
+            .map(|a| a.len())
+            .unwrap_or(0)
     } else {
         0
     };
 
     let _ = tx.send(StreamUpdate::Log(format!(
         "🚀 [API Req] Model: {} | Messages: {} | Tools: {}",
-        model, payload_messages.len(), num_tools
+        model,
+        payload_messages.len(),
+        num_tools
     )));
 
     for (i, m) in payload_messages.iter().enumerate() {
@@ -1327,16 +1450,25 @@ pub async fn stream_completion(
             (s.len(), p)
         } else if let Some(arr) = m.get("content").and_then(|v| v.as_array()) {
             let num_parts = arr.len();
-            let num_images = arr.iter().filter(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url")).count();
-            let text_preview = arr.iter().find_map(|p| {
-                if p.get("type").and_then(|t| t.as_str()) == Some("text") {
-                    p.get("text").and_then(|t| t.as_str())
-                } else {
-                    None
-                }
-            }).unwrap_or("");
+            let num_images = arr
+                .iter()
+                .filter(|p| p.get("type").and_then(|t| t.as_str()) == Some("image_url"))
+                .count();
+            let text_preview = arr
+                .iter()
+                .find_map(|p| {
+                    if p.get("type").and_then(|t| t.as_str()) == Some("text") {
+                        p.get("text").and_then(|t| t.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or("");
             let approx_len = serde_json::to_string(arr).map(|s| s.len()).unwrap_or(0);
-            (approx_len, format!("[{} parts, {} img] {}", num_parts, num_images, text_preview))
+            (
+                approx_len,
+                format!("[{} parts, {} img] {}", num_parts, num_images, text_preview),
+            )
         } else {
             (0, String::new())
         };
@@ -1347,7 +1479,8 @@ pub async fn stream_completion(
         )));
     }
 
-    let mut req = client.post(&url)
+    let mut req = client
+        .post(&url)
         .header("Content-Type", "application/json")
         .json(&body);
 
@@ -1392,8 +1525,12 @@ pub async fn stream_completion(
 
     while let Some(item) = byte_stream.next().await {
         if cancel_token.is_cancelled() {
-            let _ = tx.send(StreamUpdate::Log("🛑 [API Cancelled] Generation cancelled by user".to_string()));
-            let _ = tx.send(StreamUpdate::Error("[Generation cancelled by user]".to_string()));
+            let _ = tx.send(StreamUpdate::Log(
+                "🛑 [API Cancelled] Generation cancelled by user".to_string(),
+            ));
+            let _ = tx.send(StreamUpdate::Error(
+                "[Generation cancelled by user]".to_string(),
+            ));
             return;
         }
 
@@ -1421,21 +1558,38 @@ pub async fn stream_completion(
                 if let Ok(val) = serde_json::from_str::<Value>(json_str) {
                     if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
                         if let Some(first_choice) = choices.get(0) {
-                            if let Some(fr) = first_choice.get("finish_reason").and_then(|f| f.as_str()) {
+                            if let Some(fr) =
+                                first_choice.get("finish_reason").and_then(|f| f.as_str())
+                            {
                                 last_finish_reason = Some(fr.to_string());
                             }
                         }
                     }
                     if let Some(usage) = val.get("usage") {
-                        let pt = usage.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let ct = usage.get("completion_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                        let tt = usage.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        let pt = usage
+                            .get("prompt_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let ct = usage
+                            .get("completion_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
+                        let tt = usage
+                            .get("total_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
                         usage_info = Some((pt, ct, tt));
                     }
 
-                    if let Some(delta) = val.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")) {
+                    if let Some(delta) = val
+                        .get("choices")
+                        .and_then(|c| c.get(0))
+                        .and_then(|c| c.get("delta"))
+                    {
                         // 1. Direct reasoning_content field
-                        if let Some(reasoning) = delta.get("reasoning_content").and_then(|r| r.as_str()) {
+                        if let Some(reasoning) =
+                            delta.get("reasoning_content").and_then(|r| r.as_str())
+                        {
                             if !reasoning.is_empty() {
                                 chunk_count += 1;
                                 stream_parser.accumulated_thinking.push_str(reasoning);
@@ -1444,11 +1598,15 @@ pub async fn stream_completion(
                         }
 
                         // 2. Native tool_calls chunks
-                        if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array()) {
+                        if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array())
+                        {
                             for tc in tool_calls {
                                 chunk_count += 1;
-                                let idx = tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
-                                let entry = tool_calls_map.entry(idx).or_insert_with(|| (String::new(), String::new(), String::new()));
+                                let idx =
+                                    tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
+                                let entry = tool_calls_map.entry(idx).or_insert_with(|| {
+                                    (String::new(), String::new(), String::new())
+                                });
                                 if let Some(call_id) = tc.get("id").and_then(|s| s.as_str()) {
                                     entry.0.push_str(call_id);
                                 }
@@ -1456,7 +1614,9 @@ pub async fn stream_completion(
                                     if let Some(n) = fn_obj.get("name").and_then(|s| s.as_str()) {
                                         entry.1.push_str(n);
                                     }
-                                    if let Some(a) = fn_obj.get("arguments").and_then(|s| s.as_str()) {
+                                    if let Some(a) =
+                                        fn_obj.get("arguments").and_then(|s| s.as_str())
+                                    {
                                         entry.2.push_str(a);
                                         let _ = tx.send(StreamUpdate::ToolDrafting(a.to_string()));
                                     }
@@ -1570,10 +1730,6 @@ pub async fn stream_completion(
     });
 }
 
-
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1583,8 +1739,16 @@ mod tests {
         let raw = "<path>C:\\Windows\\Temp\\tuol_test.txt</path>\n<content>line1: write_file OK 2026-10-24 Moscow\nline2: search_files found fn main at src/main.rs:11\nline3: all 8 tools verified\n</content>";
         let norm_str = clean_and_normalize_tool_arguments("write_file", raw);
         let parsed: serde_json::Value = serde_json::from_str(&norm_str).unwrap();
-        assert_eq!(parsed.get("path").and_then(|v| v.as_str()), Some("C:\\Windows\\Temp\\tuol_test.txt"));
-        assert!(parsed.get("content").unwrap().as_str().unwrap().contains("line1: write_file OK"));
+        assert_eq!(
+            parsed.get("path").and_then(|v| v.as_str()),
+            Some("C:\\Windows\\Temp\\tuol_test.txt")
+        );
+        assert!(parsed
+            .get("content")
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .contains("line1: write_file OK"));
         println!("PASSED XML WRITE_FILE! NORM: {}", norm_str);
     }
 }
