@@ -128,7 +128,12 @@ pub async fn run_python_code(code: &str) -> (bool, String) {
 
     let mut child = match cmd.spawn() {
         Ok(c) => c,
-        Err(e) => return (false, format!("[Execution Error]: Failed to spawn python: {}", e)),
+        Err(e) => {
+            return (
+                false,
+                format!("[Execution Error]: Failed to spawn python: {}", e),
+            )
+        }
     };
 
     if let Some(mut stdin) = child.stdin.take() {
@@ -163,18 +168,24 @@ pub async fn run_python_code(code: &str) -> (bool, String) {
                 };
                 (true, out)
             } else {
-                let err_msg = if !stderr.is_empty() {
-                    stderr
-                } else {
-                    stdout
-                };
-                (false, format!("[Python Error, Exit {}]: {}", status.code().unwrap_or(-1), err_msg))
+                let err_msg = if !stderr.is_empty() { stderr } else { stdout };
+                (
+                    false,
+                    format!(
+                        "[Python Error, Exit {}]: {}",
+                        status.code().unwrap_or(-1),
+                        err_msg
+                    ),
+                )
             }
         }
         Ok(Err(e)) => (false, format!("[Execution Error]: {}", e)),
         Err(_) => {
             let _ = child.kill().await;
-            (false, "[Execution Timeout]: Python script exceeded 25s limit.".to_string())
+            (
+                false,
+                "[Execution Timeout]: Python script exceeded 25s limit.".to_string(),
+            )
         }
     }
 }
@@ -261,11 +272,13 @@ pub async fn run_shell_command(command_str: &str, cwd: Option<&str>) -> (bool, S
         Ok(Err(e)) => (false, format!("[Shell Error]: {}", e)),
         Err(_) => {
             let _ = child.kill().await;
-            (false, "[Shell Timeout]: Command exceeded 45s limit.".to_string())
+            (
+                false,
+                "[Shell Timeout]: Command exceeded 45s limit.".to_string(),
+            )
         }
     }
 }
-
 
 use crate::engine::client::strip_residual_tags;
 
@@ -306,7 +319,8 @@ pub async fn run_web_scout_fetch(url: &str) -> (bool, String) {
             if resp.status().is_success() {
                 if let Ok(html) = resp.text().await {
                     let text = strip_html_tags(&html);
-                    let lines: Vec<&str> = text.lines()
+                    let lines: Vec<&str> = text
+                        .lines()
                         .map(|l| l.trim())
                         .filter(|l| !l.is_empty())
                         .collect();
@@ -346,7 +360,9 @@ pub fn clean_search_query(raw: &str) -> String {
     }
 
     // Strip common pseudo prefixes like "query>", "query:", "<query>", "search>", "search:", "q:", "q>"
-    let prefixes = ["query>", "query:", "<query>", "search>", "search:", "q:", "q>"];
+    let prefixes = [
+        "query>", "query:", "<query>", "search>", "search:", "q:", "q>",
+    ];
     for p in &prefixes {
         let lower = q.to_lowercase();
         if lower.starts_with(p) {
@@ -397,7 +413,9 @@ fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16) {
+            if let Ok(byte) =
+                u8::from_str_radix(std::str::from_utf8(&bytes[i + 1..i + 3]).unwrap_or(""), 16)
+            {
                 decoded.push(byte);
                 i += 3;
                 continue;
@@ -411,18 +429,22 @@ fn percent_decode(s: &str) -> String {
 
 async fn native_ddg_html_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
         .timeout(Duration::from_secs(8))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
-    let params = [("q", query), ("b", "")];
+    let encoded_q = urlencoding_encode(query);
+    let url = format!("https://html.duckduckgo.com/html/?q={}", encoded_q);
+
     let resp = client
-        .post("https://html.duckduckgo.com/html/")
-        .form(&params)
+        .get(&url)
         .header("Referer", "https://html.duckduckgo.com/")
-        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .header("Accept-Language", "en-US,en;q=0.5")
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .header("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
         .send()
         .await
         .map_err(|e| format!("Request failed: {}", e))?
@@ -434,42 +456,55 @@ async fn native_ddg_html_search(query: &str, limit: usize) -> Result<String, Str
         return Err("DDG anomaly detected".to_string());
     }
 
-    let link_regex = regex::Regex::new(r#"<a class="result__url" href="([^"]+)""#)
-        .map_err(|e| e.to_string())?;
-    let title_regex = regex::Regex::new(r#"(?s)<a class="result__a"[^>]*>(.*?)</a>"#)
-        .map_err(|e| e.to_string())?;
-    let snip_regex = regex::Regex::new(r#"(?s)<a class="result__snippet"[^>]*>(.*?)</a>"#)
-        .map_err(|e| e.to_string())?;
+    let title_regex = regex::Regex::new(
+        r#"(?s)<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>"#,
+    )
+    .map_err(|e| e.to_string())?;
+    let title_regex_alt = regex::Regex::new(
+        r#"(?s)<a[^>]+href="([^"]+)"[^>]+class="[^"]*result__a[^"]*"[^>]*>(.*?)</a>"#,
+    )
+    .map_err(|e| e.to_string())?;
+    let snip_regex = regex::Regex::new(
+        r#"(?s)<(?:a|div)[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</(?:a|div)>"#,
+    )
+    .map_err(|e| e.to_string())?;
 
-    // Split on result__body
-    let parts: Vec<&str> = resp.split(r#"class="result__body"#).collect();
+    let parts: Vec<&str> = resp.split("result__body").collect();
     let mut results = Vec::new();
 
     for block in parts.into_iter().skip(1) {
-        let url = link_regex.captures(block).map(|c| {
-            let u = &c[1];
-            if u.contains("uddg=") {
-                let parts: Vec<&str> = u.split("uddg=").collect();
-                if parts.len() > 1 {
-                    let end_pos = parts[1].find('&').unwrap_or(parts[1].len());
-                    percent_decode(&parts[1][..end_pos])
+        let (raw_href, raw_title) = if let Some(c) = title_regex.captures(block) {
+            (c.get(1).map(|m| m.as_str()), c.get(2).map(|m| m.as_str()))
+        } else if let Some(c) = title_regex_alt.captures(block) {
+            (c.get(1).map(|m| m.as_str()), c.get(2).map(|m| m.as_str()))
+        } else {
+            (None, None)
+        };
+
+        if let (Some(href), Some(title_html)) = (raw_href, raw_title) {
+            let u = if href.contains("uddg=") {
+                let p: Vec<&str> = href.split("uddg=").collect();
+                if p.len() > 1 {
+                    let end_pos = p[1].find('&').unwrap_or(p[1].len());
+                    percent_decode(&p[1][..end_pos])
                 } else {
-                    u.to_string()
+                    href.to_string()
                 }
             } else {
-                u.to_string()
-            }
-        });
+                href.to_string()
+            };
 
-        let title = title_regex.captures(block).map(|c| strip_html_tags(&c[1]));
-        let snippet = snip_regex.captures(block).map(|c| strip_html_tags(&c[1])).unwrap_or_default();
+            let t = strip_html_tags(title_html);
+            let snip = snip_regex
+                .captures(block)
+                .map(|c| strip_html_tags(&c[1]))
+                .unwrap_or_default();
 
-        if let (Some(u), Some(t)) = (url, title) {
             if !u.is_empty() && !t.is_empty() {
                 results.push(serde_json::json!({
                     "title": t,
                     "url": u,
-                    "snippet": snippet
+                    "snippet": snip
                 }));
                 if results.len() >= limit {
                     break;
@@ -485,17 +520,178 @@ async fn native_ddg_html_search(query: &str, limit: usize) -> Result<String, Str
     serde_json::to_string(&results).map_err(|e| e.to_string())
 }
 
+async fn native_ddg_lite_search(query: &str, limit: usize) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        .timeout(Duration::from_secs(7))
+        .build()
+        .map_err(|e| format!("Client error: {}", e))?;
+
+    let params = [("q", query)];
+    let resp = client
+        .post("https://lite.duckduckgo.com/lite/")
+        .form(&params)
+        .header("Referer", "https://lite.duckduckgo.com/")
+        .header(
+            "Accept",
+            "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        )
+        .header("Accept-Language", "en-US,en;q=0.9,ru;q=0.8")
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Body read error: {}", e))?;
+
+    if resp.to_lowercase().contains("anomaly") {
+        return Err("DDG Lite anomaly detected".to_string());
+    }
+
+    let link_regex = regex::Regex::new(r#"(?s)<a[^>]+href=['"]([^'"]+)['"][^>]*class=['"][^'"]*result-link[^'"]*['"][^>]*>(.*?)</a>"#)
+        .map_err(|e| e.to_string())?;
+    let link_regex_alt = regex::Regex::new(r#"(?s)<a[^>]+class=['"][^'"]*result-link[^'"]*['"][^>]+href=['"]([^'"]+)['"][^>]*>(.*?)</a>"#)
+        .map_err(|e| e.to_string())?;
+    let snip_regex = regex::Regex::new(
+        r#"(?s)<td[^>]*class=['"][^'"]*result-snippet[^'"]*['"][^>]*>(.*?)</td>"#,
+    )
+    .map_err(|e| e.to_string())?;
+
+    let row_regex = regex::Regex::new(r#"(?s)<tr>(.*?)</tr>"#).map_err(|e| e.to_string())?;
+    let mut results = Vec::new();
+    let mut current_url = String::new();
+    let mut current_title = String::new();
+
+    for row_cap in row_regex.captures_iter(&resp) {
+        let row_content = &row_cap[1];
+        let link_match = link_regex
+            .captures(row_content)
+            .or_else(|| link_regex_alt.captures(row_content));
+        if let Some(c) = link_match {
+            let raw_u = &c[1];
+            current_url = if raw_u.contains("uddg=") {
+                let p: Vec<&str> = raw_u.split("uddg=").collect();
+                if p.len() > 1 {
+                    let end_pos = p[1].find('&').unwrap_or(p[1].len());
+                    percent_decode(&p[1][..end_pos])
+                } else {
+                    raw_u.to_string()
+                }
+            } else {
+                raw_u.to_string()
+            };
+            current_title = strip_html_tags(&c[2]);
+            continue;
+        }
+
+        if let Some(s_cap) = snip_regex.captures(row_content) {
+            if !current_url.is_empty() && !current_title.is_empty() {
+                let snip = strip_html_tags(&s_cap[1]);
+                results.push(serde_json::json!({
+                    "title": current_title.clone(),
+                    "url": current_url.clone(),
+                    "snippet": snip
+                }));
+                current_url.clear();
+                current_title.clear();
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+
+    if results.is_empty() {
+        return Err("No search results in DDG Lite".to_string());
+    }
+
+    serde_json::to_string(&results).map_err(|e| e.to_string())
+}
+
+async fn native_ddg_instant_search(query: &str, limit: usize) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        .timeout(Duration::from_secs(6))
+        .build()
+        .map_err(|e| format!("Client error: {}", e))?;
+
+    let encoded_q = urlencoding_encode(query);
+    let url = format!("https://api.duckduckgo.com/?q={}&format=json", encoded_q);
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Instant search error: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("Body read error: {}", e))?;
+
+    let val: serde_json::Value = serde_json::from_str(&resp).map_err(|e| e.to_string())?;
+    let mut results = Vec::new();
+
+    let abstract_text = val
+        .get("AbstractText")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let abstract_url = val
+        .get("AbstractURL")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let heading = val.get("Heading").and_then(|v| v.as_str()).unwrap_or(query);
+
+    if !abstract_text.is_empty() && !abstract_url.is_empty() {
+        results.push(serde_json::json!({
+            "title": heading,
+            "url": abstract_url,
+            "snippet": abstract_text
+        }));
+    }
+
+    if let Some(topics) = val.get("RelatedTopics").and_then(|v| v.as_array()) {
+        for t in topics {
+            let text = t.get("Text").and_then(|v| v.as_str()).unwrap_or("");
+            let first_url = t.get("FirstURL").and_then(|v| v.as_str()).unwrap_or("");
+            if !text.is_empty() && !first_url.is_empty() {
+                results.push(serde_json::json!({
+                    "title": text.chars().take(60).collect::<String>(),
+                    "url": first_url,
+                    "snippet": text
+                }));
+                if results.len() >= limit {
+                    break;
+                }
+            }
+        }
+    }
+
+    if results.is_empty() {
+        return Err("No instant search results".to_string());
+    }
+
+    serde_json::to_string(&results).map_err(|e| e.to_string())
+}
+
 async fn native_wikipedia_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
-        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36")
+        .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
         .timeout(Duration::from_secs(6))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
     let encoded_query = urlencoding_encode(query);
+    // Language detection: if contains Cyrillic characters, query ru.wikipedia.org
+    let has_cyrillic = query
+        .chars()
+        .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    let domain = if has_cyrillic {
+        "ru.wikipedia.org"
+    } else {
+        "en.wikipedia.org"
+    };
     let url = format!(
-        "https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={}&format=json&utf8=",
-        encoded_query
+        "https://{}/w/api.php?action=query&list=search&srsearch={}&format=json&utf8=",
+        domain, encoded_query
     );
 
     let resp = client
@@ -508,7 +704,8 @@ async fn native_wikipedia_search(query: &str, limit: usize) -> Result<String, St
         .map_err(|e| format!("Wikipedia read error: {}", e))?;
 
     let val: serde_json::Value = serde_json::from_str(&resp).map_err(|e| e.to_string())?;
-    let search_items = val.get("query")
+    let search_items = val
+        .get("query")
         .and_then(|q| q.get("search"))
         .and_then(|s| s.as_array())
         .ok_or_else(|| "No search results in Wikipedia response".to_string())?;
@@ -518,7 +715,7 @@ async fn native_wikipedia_search(query: &str, limit: usize) -> Result<String, St
         let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
         let raw_snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
         let snippet = strip_html_tags(raw_snippet);
-        let article_url = format!("https://en.wikipedia.org/wiki/{}", title.replace(' ', "_"));
+        let article_url = format!("https://{}/wiki/{}", domain, title.replace(' ', "_"));
 
         if !title.is_empty() {
             results.push(serde_json::json!({
@@ -550,20 +747,115 @@ fn urlencoding_encode(input: &str) -> String {
     encoded
 }
 
+pub fn extract_query_arg(args_str: &str) -> String {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+        if let Some(obj) = val.as_object() {
+            let candidate_keys = [
+                "query",
+                "q",
+                "search_query",
+                "search",
+                "search_term",
+                "keywords",
+                "keyword",
+                "topic",
+                "input",
+                "text",
+                "prompt",
+            ];
+            for k in &candidate_keys {
+                if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
+                    return v.to_string();
+                }
+            }
+            // If no standard key, grab the first string property
+            for (_k, v) in obj {
+                if let Some(s) = v.as_str() {
+                    return s.to_string();
+                }
+            }
+        }
+    } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+        if let Some(obj) = val.as_object() {
+            let candidate_keys = [
+                "query",
+                "q",
+                "search_query",
+                "search",
+                "search_term",
+                "keywords",
+                "keyword",
+                "topic",
+                "input",
+                "text",
+                "prompt",
+            ];
+            for k in &candidate_keys {
+                if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
+                    return v.to_string();
+                }
+            }
+            for (_k, v) in obj {
+                if let Some(s) = v.as_str() {
+                    return s.to_string();
+                }
+            }
+        }
+    }
+    args_str.to_string()
+}
+
+pub fn extract_url_arg(args_str: &str) -> String {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+        if let Some(obj) = val.as_object() {
+            let candidate_keys = ["url", "link", "target_url", "href", "input"];
+            for k in &candidate_keys {
+                if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
+                    return v.to_string();
+                }
+            }
+            for (_k, v) in obj {
+                if let Some(s) = v.as_str() {
+                    if s.starts_with("http://") || s.starts_with("https://") {
+                        return s.to_string();
+                    }
+                }
+            }
+        }
+    } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+        if let Some(obj) = val.as_object() {
+            let candidate_keys = ["url", "link", "target_url", "href", "input"];
+            for k in &candidate_keys {
+                if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
+                    return v.to_string();
+                }
+            }
+        }
+    }
+    args_str.to_string()
+}
+
 pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
     let query = clean_search_query(raw_query);
     if query.is_empty() {
         return (false, "Search query is empty.".to_string());
     }
 
-    // 1. Native Rust DuckDuckGo HTML Search
+    // 1. Native Rust DuckDuckGo HTML GET Search
     if let Ok(out) = native_ddg_html_search(&query, limit).await {
         if out.starts_with('[') && out.len() > 2 {
             return (true, out);
         }
     }
 
-    // 1b. If long query returns nothing, retry simplified with first 5-6 words
+    // 2. DuckDuckGo Lite Fallback
+    if let Ok(out_lite) = native_ddg_lite_search(&query, limit).await {
+        if out_lite.starts_with('[') && out_lite.len() > 2 {
+            return (true, out_lite);
+        }
+    }
+
+    // 2b. If long query returns nothing, retry simplified with first 5-6 words
     let words: Vec<&str> = query.split_whitespace().collect();
     if words.len() > 5 {
         let simplified = words[..5].join(" ");
@@ -572,16 +864,28 @@ pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
                 return (true, out_retry);
             }
         }
+        if let Ok(out_lite_retry) = native_ddg_lite_search(&simplified, limit).await {
+            if out_lite_retry.starts_with('[') && out_lite_retry.len() > 2 {
+                return (true, out_lite_retry);
+            }
+        }
     }
 
-    // 2. Wikipedia Search API Fallback (reliable public API, resilient to blocks)
+    // 3. DuckDuckGo Instant Answer API Fallback
+    if let Ok(out_instant) = native_ddg_instant_search(&query, limit).await {
+        if out_instant.starts_with('[') && out_instant.len() > 2 {
+            return (true, out_instant);
+        }
+    }
+
+    // 4. Wikipedia Search API Fallback (language-aware ru/en)
     if let Ok(out_wiki) = native_wikipedia_search(&query, limit).await {
         if out_wiki.starts_with('[') && out_wiki.len() > 2 {
             return (true, out_wiki);
         }
     }
 
-    // 3. Fallback to web_scout search if binary is available locally
+    // 5. Fallback to web_scout search if binary is available locally
     if let Some(bin) = find_web_scout_bin() {
         let mut cmd = Command::new(bin);
         cmd.arg("search").arg(&query).arg(limit.to_string());
@@ -608,7 +912,11 @@ pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
     (false, format!("No search results found for: {}", query))
 }
 
-pub async fn run_read_file(path_str: &str, start_line: Option<usize>, end_line: Option<usize>) -> (bool, String) {
+pub async fn run_read_file(
+    path_str: &str,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+) -> (bool, String) {
     let stripped = strip_residual_tags(path_str);
     let clean_path = stripped.trim().trim_matches('"').trim_matches('\'').trim();
     if clean_path.is_empty() {
@@ -620,18 +928,36 @@ pub async fn run_read_file(path_str: &str, start_line: Option<usize>, end_line: 
         return (false, format!("Error: File not found: {}", clean_path));
     }
     if p.is_dir() {
-        return (false, format!("Error: '{}' is a directory, not a file. Use list_dir instead.", clean_path));
+        return (
+            false,
+            format!(
+                "Error: '{}' is a directory, not a file. Use list_dir instead.",
+                clean_path
+            ),
+        );
     }
 
     let data = match tokio::fs::read(p).await {
         Ok(d) => d,
-        Err(e) => return (false, format!("Failed to read file '{}': {}", clean_path, e)),
+        Err(e) => {
+            return (
+                false,
+                format!("Failed to read file '{}': {}", clean_path, e),
+            )
+        }
     };
 
     // Quick binary check on first 1024 bytes
     let sample = &data[..data.len().min(1024)];
     if sample.contains(&0) {
-        return (false, format!("Cannot display binary file '{}' ({} bytes)", clean_path, data.len()));
+        return (
+            false,
+            format!(
+                "Cannot display binary file '{}' ({} bytes)",
+                clean_path,
+                data.len()
+            ),
+        );
     }
 
     let text = String::from_utf8_lossy(&data);
@@ -639,12 +965,21 @@ pub async fn run_read_file(path_str: &str, start_line: Option<usize>, end_line: 
     let total_lines = lines.len();
 
     if total_lines == 0 {
-        return (true, format!("File: {} is empty (0 lines, 0 bytes)", clean_path));
+        return (
+            true,
+            format!("File: {} is empty (0 lines, 0 bytes)", clean_path),
+        );
     }
 
     let start = start_line.unwrap_or(1).max(1);
     if start > total_lines {
-        return (false, format!("Error: start_line ({}) exceeds total lines ({}) in {}", start, total_lines, clean_path));
+        return (
+            false,
+            format!(
+                "Error: start_line ({}) exceeds total lines ({}) in {}",
+                start, total_lines, clean_path
+            ),
+        );
     }
 
     let max_lines_window = 250;
@@ -653,13 +988,21 @@ pub async fn run_read_file(path_str: &str, start_line: Option<usize>, end_line: 
         None => (start + max_lines_window - 1).min(total_lines),
     };
 
-    let mut out = format!("File: {} (Lines {}-{} of {})\n\n", clean_path, start, end, total_lines);
+    let mut out = format!(
+        "File: {} (Lines {}-{} of {})\n\n",
+        clean_path, start, end, total_lines
+    );
     for idx in start..=end {
         out.push_str(&format!("{:4}: {}\n", idx, lines[idx - 1]));
     }
 
     if end < total_lines {
-        out.push_str(&format!("\n[... Remaining {} lines omitted. Use start_line={}, end_line={} to view more ...]\n", total_lines - end, end + 1, (end + max_lines_window).min(total_lines)));
+        out.push_str(&format!(
+            "\n[... Remaining {} lines omitted. Use start_line={}, end_line={} to view more ...]\n",
+            total_lines - end,
+            end + 1,
+            (end + max_lines_window).min(total_lines)
+        ));
     }
 
     (true, out)
@@ -676,7 +1019,14 @@ pub async fn run_write_file(path_str: &str, content: &str) -> (bool, String) {
     if let Some(parent) = p.parent() {
         if !parent.as_os_str().is_empty() {
             if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                return (false, format!("Failed to create parent directory '{}': {}", parent.display(), e));
+                return (
+                    false,
+                    format!(
+                        "Failed to create parent directory '{}': {}",
+                        parent.display(),
+                        e
+                    ),
+                );
             }
         }
     }
@@ -684,9 +1034,20 @@ pub async fn run_write_file(path_str: &str, content: &str) -> (bool, String) {
     match tokio::fs::write(p, content.as_bytes()).await {
         Ok(_) => {
             let line_count = content.lines().count();
-            (true, format!("Successfully wrote {} bytes ({} lines) to {}", content.len(), line_count, clean_path))
+            (
+                true,
+                format!(
+                    "Successfully wrote {} bytes ({} lines) to {}",
+                    content.len(),
+                    line_count,
+                    clean_path
+                ),
+            )
         }
-        Err(e) => (false, format!("Failed to write file '{}': {}", clean_path, e)),
+        Err(e) => (
+            false,
+            format!("Failed to write file '{}': {}", clean_path, e),
+        ),
     }
 }
 
@@ -699,7 +1060,13 @@ pub async fn run_list_dir(path_str: &str, depth: Option<usize>) -> (bool, String
         return (false, format!("Directory not found: {}", root));
     }
     if !p.is_dir() {
-        return (false, format!("'{}' is not a directory. Use read_file to inspect files.", root));
+        return (
+            false,
+            format!(
+                "'{}' is not a directory. Use read_file to inspect files.",
+                root
+            ),
+        );
     }
 
     let max_depth = depth.unwrap_or(2);
@@ -719,7 +1086,13 @@ pub async fn run_list_dir(path_str: &str, depth: Option<usize>) -> (bool, String
 
         for item in items {
             let name = item.file_name().to_string_lossy().to_string();
-            if name == ".git" || name == "target" || name == "node_modules" || name == "__pycache__" || name == ".idea" || name == ".vscode" {
+            if name == ".git"
+                || name == "target"
+                || name == "node_modules"
+                || name == "__pycache__"
+                || name == ".idea"
+                || name == ".vscode"
+            {
                 continue;
             }
             let path = item.path();
@@ -744,7 +1117,12 @@ pub async fn run_list_dir(path_str: &str, depth: Option<usize>) -> (bool, String
                     }
                     Err(_) => "unknown size".to_string(),
                 };
-                entries.push(format!("{}[FILE] {} ({})", indent, path.display(), size_str));
+                entries.push(format!(
+                    "{}[FILE] {} ({})",
+                    indent,
+                    path.display(),
+                    size_str
+                ));
             }
             if entries.len() >= 150 {
                 entries.push("... (listing truncated at 150 items)".to_string());
@@ -757,19 +1135,38 @@ pub async fn run_list_dir(path_str: &str, depth: Option<usize>) -> (bool, String
     if entries.is_empty() {
         (true, format!("Directory '{}' is empty.", root))
     } else {
-        (true, format!("Directory listing for '{}' (depth <= {}):\n{}", root, max_depth, entries.join("\n")))
+        (
+            true,
+            format!(
+                "Directory listing for '{}' (depth <= {}):\n{}",
+                root,
+                max_depth,
+                entries.join("\n")
+            ),
+        )
     }
 }
 
 pub async fn run_search_files(pattern: &str, path_str: &str) -> (bool, String) {
     let stripped_pat = strip_residual_tags(pattern);
-    let clean_pat = stripped_pat.trim().trim_matches('"').trim_matches('\'').trim();
+    let clean_pat = stripped_pat
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim();
     if clean_pat.is_empty() {
-        return (false, "Error: pattern is required for search_files".to_string());
+        return (
+            false,
+            "Error: pattern is required for search_files".to_string(),
+        );
     }
 
     let stripped_path = strip_residual_tags(path_str);
-    let target = stripped_path.trim().trim_matches('"').trim_matches('\'').trim();
+    let target = stripped_path
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .trim();
     let root = if target.is_empty() { "." } else { target };
     let p = Path::new(root);
     if !p.exists() {
@@ -783,7 +1180,13 @@ pub async fn run_search_files(pattern: &str, path_str: &str) -> (bool, String) {
     let mut matches = Vec::new();
     let max_matches = 60;
 
-    fn search_dir(dir: &Path, matcher: &Result<regex::Regex, regex::Error>, literal: &str, matches: &mut Vec<String>, max_matches: usize) {
+    fn search_dir(
+        dir: &Path,
+        matcher: &Result<regex::Regex, regex::Error>,
+        literal: &str,
+        matches: &mut Vec<String>,
+        max_matches: usize,
+    ) {
         if matches.len() >= max_matches {
             return;
         }
@@ -796,7 +1199,13 @@ pub async fn run_search_files(pattern: &str, path_str: &str) -> (bool, String) {
                 return;
             }
             let name = entry.file_name().to_string_lossy().to_string();
-            if name == ".git" || name == "target" || name == "node_modules" || name == "__pycache__" || name == ".idea" || name == ".vscode" {
+            if name == ".git"
+                || name == "target"
+                || name == "node_modules"
+                || name == "__pycache__"
+                || name == ".idea"
+                || name == ".vscode"
+            {
                 continue;
             }
             let path = entry.path();
@@ -819,7 +1228,12 @@ pub async fn run_search_files(pattern: &str, path_str: &str) -> (bool, String) {
                             Err(_) => line.to_lowercase().contains(&literal.to_lowercase()),
                         };
                         if is_match {
-                            matches.push(format!("{}:{}: {}", path.display(), line_idx + 1, line.trim()));
+                            matches.push(format!(
+                                "{}:{}: {}",
+                                path.display(),
+                                line_idx + 1,
+                                line.trim()
+                            ));
                             if matches.len() >= max_matches {
                                 return;
                             }
@@ -851,11 +1265,28 @@ pub async fn run_search_files(pattern: &str, path_str: &str) -> (bool, String) {
     }
 
     if matches.is_empty() {
-        (true, format!("No matches found for '{}' in '{}'", clean_pat, root))
+        (
+            true,
+            format!("No matches found for '{}' in '{}'", clean_pat, root),
+        )
     } else {
         let count = matches.len();
-        let suffix = if count >= max_matches { "\n... (reached max 60 results, refine your search)" } else { "" };
-        (true, format!("Found {} match(es) for '{}' in '{}':\n{}{}", count, clean_pat, root, matches.join("\n"), suffix))
+        let suffix = if count >= max_matches {
+            "\n... (reached max 60 results, refine your search)"
+        } else {
+            ""
+        };
+        (
+            true,
+            format!(
+                "Found {} match(es) for '{}' in '{}':\n{}{}",
+                count,
+                clean_pat,
+                root,
+                matches.join("\n"),
+                suffix
+            ),
+        )
     }
 }
 
@@ -864,7 +1295,11 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
     let norm_args = crate::engine::clean_and_normalize_tool_arguments(&lower_name, raw_args);
     let args_str = norm_args.as_str();
 
-    if lower_name == "execute_python" || lower_name == "python" || lower_name == "calc" || lower_name == "eval" {
+    if lower_name == "execute_python"
+        || lower_name == "python"
+        || lower_name == "calc"
+        || lower_name == "eval"
+    {
         let code = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
             val.get("code")
                 .and_then(|c| c.as_str())
@@ -885,50 +1320,107 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
             args_str.to_string()
         };
         run_python_code(&code).await
-    } else if lower_name == "run_command" || lower_name == "bash" || lower_name == "shell" || lower_name == "cmd" {
+    } else if lower_name == "run_command"
+        || lower_name == "bash"
+        || lower_name == "shell"
+        || lower_name == "cmd"
+    {
         let (cmd, cwd) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
-            let c = val.get("cmd")
+            let c = val
+                .get("cmd")
                 .or_else(|| val.get("command"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(args_str)
                 .to_string();
-            let d = val.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let d = val
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             (c, d)
         } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
-            let c = val.get("cmd")
+            let c = val
+                .get("cmd")
                 .or_else(|| val.get("command"))
                 .and_then(|v| v.as_str())
                 .unwrap_or(args_str)
                 .to_string();
-            let d = val.get("cwd").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let d = val
+                .get("cwd")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             (c, d)
         } else {
             (args_str.to_string(), None)
         };
         run_shell_command(&cmd, cwd.as_deref()).await
     } else if lower_name == "read_file" || lower_name == "read" {
-        let (path, start, end) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
-            let p = val.get("path").or_else(|| val.get("input")).or_else(|| val.get("file")).or_else(|| val.get("filename")).and_then(|v| v.as_str()).unwrap_or(args_str).to_string();
-            let s = val.get("start_line").and_then(|v| v.as_u64()).map(|u| u as usize);
-            let e = val.get("end_line").and_then(|v| v.as_u64()).map(|u| u as usize);
-            (p, s, e)
-        } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
-            let p = val.get("path").and_then(|v| v.as_str()).unwrap_or(args_str).to_string();
-            let s = val.get("start_line").and_then(|v| v.as_u64()).map(|u| u as usize);
-            let e = val.get("end_line").and_then(|v| v.as_u64()).map(|u| u as usize);
-            (p, s, e)
-        } else {
-            (args_str.to_string(), None, None)
-        };
+        let (path, start, end) =
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+                let p = val
+                    .get("path")
+                    .or_else(|| val.get("input"))
+                    .or_else(|| val.get("file"))
+                    .or_else(|| val.get("filename"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(args_str)
+                    .to_string();
+                let s = val
+                    .get("start_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|u| u as usize);
+                let e = val
+                    .get("end_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|u| u as usize);
+                (p, s, e)
+            } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+                let p = val
+                    .get("path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(args_str)
+                    .to_string();
+                let s = val
+                    .get("start_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|u| u as usize);
+                let e = val
+                    .get("end_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|u| u as usize);
+                (p, s, e)
+            } else {
+                (args_str.to_string(), None, None)
+            };
         run_read_file(&path, start, end).await
     } else if lower_name == "write_file" || lower_name == "write" {
         let (path, content) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
-            let p = val.get("path").or_else(|| val.get("input")).or_else(|| val.get("file")).or_else(|| val.get("filename")).and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let c = val.get("content").or_else(|| val.get("text")).or_else(|| val.get("body")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let p = val
+                .get("path")
+                .or_else(|| val.get("input"))
+                .or_else(|| val.get("file"))
+                .or_else(|| val.get("filename"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let c = val
+                .get("content")
+                .or_else(|| val.get("text"))
+                .or_else(|| val.get("body"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             (p, c)
         } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
-            let p = val.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let c = val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let p = val
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let c = val
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             (p, c)
         } else {
             (args_str.to_string(), String::new())
@@ -936,66 +1428,85 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
         run_write_file(&path, &content).await
     } else if lower_name == "list_dir" || lower_name == "ls" || lower_name == "dir" {
         let (path, depth) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
-            let p = val.get("path").and_then(|v| v.as_str()).unwrap_or(".").to_string();
-            let d = val.get("depth").and_then(|v| v.as_u64()).map(|u| u as usize);
+            let p = val
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string();
+            let d = val
+                .get("depth")
+                .and_then(|v| v.as_u64())
+                .map(|u| u as usize);
             (p, d)
         } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
-            let p = val.get("path").and_then(|v| v.as_str()).unwrap_or(".").to_string();
-            let d = val.get("depth").and_then(|v| v.as_u64()).map(|u| u as usize);
+            let p = val
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string();
+            let d = val
+                .get("depth")
+                .and_then(|v| v.as_u64())
+                .map(|u| u as usize);
             (p, d)
         } else {
             let clean = args_str.trim().trim_matches('"').trim_matches('\'').trim();
-            (if clean.is_empty() { ".".to_string() } else { clean.to_string() }, None)
+            (
+                if clean.is_empty() {
+                    ".".to_string()
+                } else {
+                    clean.to_string()
+                },
+                None,
+            )
         };
         run_list_dir(&path, depth).await
     } else if lower_name == "search_files" || lower_name == "grep" || lower_name == "search_code" {
         let (pattern, path) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
-            let pat = val.get("pattern").or_else(|| val.get("query")).or_else(|| val.get("input")).and_then(|v| v.as_str()).unwrap_or(args_str).to_string();
-            let p = val.get("path").or_else(|| val.get("dir")).and_then(|v| v.as_str()).unwrap_or(".").to_string();
+            let pat = val
+                .get("pattern")
+                .or_else(|| val.get("query"))
+                .or_else(|| val.get("input"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(args_str)
+                .to_string();
+            let p = val
+                .get("path")
+                .or_else(|| val.get("dir"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string();
             (pat, p)
         } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
-            let pat = val.get("pattern").or_else(|| val.get("query")).and_then(|v| v.as_str()).unwrap_or(args_str).to_string();
-            let p = val.get("path").and_then(|v| v.as_str()).unwrap_or(".").to_string();
+            let pat = val
+                .get("pattern")
+                .or_else(|| val.get("query"))
+                .and_then(|v| v.as_str())
+                .unwrap_or(args_str)
+                .to_string();
+            let p = val
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or(".")
+                .to_string();
             (pat, p)
         } else {
             (args_str.to_string(), ".".to_string())
         };
         run_search_files(&pattern, &path).await
-    } else if lower_name == "web_search" || lower_name == "search" || lower_name == "duckduckgo_search" || lower_name == "google_search" {
-        let query = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
-            val.get("query")
-                .or_else(|| val.get("q"))
-                .or_else(|| val.get("input"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(args_str)
-                .to_string()
-        } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
-            val.get("query")
-                .or_else(|| val.get("q"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(args_str)
-                .to_string()
-        } else {
-            args_str.to_string()
-        };
+    } else if lower_name == "web_search"
+        || lower_name == "search"
+        || lower_name == "duckduckgo_search"
+        || lower_name == "google_search"
+    {
+        let query = extract_query_arg(args_str);
         run_web_search(&query, 4).await
-    } else if lower_name == "fetch_page" || lower_name == "fetch" || lower_name == "read_url" || lower_name == "web_fetch" {
-        let url = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
-            val.get("url")
-                .or_else(|| val.get("link"))
-                .or_else(|| val.get("input"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(args_str)
-                .to_string()
-        } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
-            val.get("url")
-                .or_else(|| val.get("link"))
-                .and_then(|v| v.as_str())
-                .unwrap_or(args_str)
-                .to_string()
-        } else {
-            args_str.to_string()
-        };
+    } else if lower_name == "fetch_page"
+        || lower_name == "fetch"
+        || lower_name == "read_url"
+        || lower_name == "web_fetch"
+    {
+        let url = extract_url_arg(args_str);
         run_web_scout_fetch(&url).await
     } else {
         (false, format!("Unknown tool: {}", name))
@@ -1012,5 +1523,11 @@ mod tests {
         eprintln!("SEARCH RESULT: ok={}, len={}", ok, res.len());
         assert!(ok, "Search failed: {}", res);
     }
-}
 
+    #[tokio::test]
+    async fn test_russian_search() {
+        let (ok, res) = run_web_search("новости космонавтики", 3).await;
+        eprintln!("RUSSIAN SEARCH RESULT: ok={}, len={}", ok, res.len());
+        assert!(ok, "Search failed: {}", res);
+    }
+}
