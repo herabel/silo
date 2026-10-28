@@ -241,7 +241,7 @@ Some preliminary thought here.
         println!(
             "FAIL! (len={}, args={:?})",
             extracted_paren.len(),
-            extracted_paren.get(0).map(|x| &x.arguments)
+            extracted_paren.first().map(|x| &x.arguments)
         );
     }
 
@@ -351,11 +351,7 @@ pub async fn run_agent_session(
         let sys_prompt_clone = system_prompt.clone();
         let msgs_clone = messages.clone();
 
-        let enable_tools = if is_deep && fetch_count >= max_fetches {
-            false
-        } else {
-            true
-        };
+        let enable_tools = !(is_deep && fetch_count >= max_fetches);
 
         let forced_tool = if step == 1 {
             let lower_q = query.to_lowercase();

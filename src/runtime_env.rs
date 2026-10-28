@@ -254,7 +254,7 @@ pub fn mask_output_data(output: &str, config: &ContextConfig) -> String {
             let p = config.spoof_user_home.trim().replace('\\', "/");
             p.split('/')
                 .filter(|s| !s.is_empty())
-                .last()
+                .next_back()
                 .unwrap_or("developer")
                 .to_string()
         } else {

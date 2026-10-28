@@ -90,6 +90,12 @@ pub struct VaultManager {
     key_file_path: PathBuf,
 }
 
+impl Default for VaultManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VaultManager {
     pub fn new() -> Self {
         let key_dir = dirs_key_dir();

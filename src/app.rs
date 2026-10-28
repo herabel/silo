@@ -168,7 +168,7 @@ impl SiloApp {
         if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\seguisym.ttf") {
             fonts.font_data.insert(
                 "segoe_sym".to_owned(),
-                egui::FontData::from_owned(data).into(),
+                egui::FontData::from_owned(data),
             );
             fonts
                 .families
@@ -184,7 +184,7 @@ impl SiloApp {
         if let Ok(data) = std::fs::read("C:\\Windows\\Fonts\\arial.ttf") {
             fonts
                 .font_data
-                .insert("arial".to_owned(), egui::FontData::from_owned(data).into());
+                .insert("arial".to_owned(), egui::FontData::from_owned(data));
             fonts
                 .families
                 .get_mut(&egui::FontFamily::Proportional)
@@ -348,7 +348,7 @@ impl SiloApp {
             self.cancel_current_generation();
         }
         self.active_session_id = Some(id);
-        self.is_deep_active = self.active_session().map_or(false, |s| s.is_deep_research);
+        self.is_deep_active = self.active_session().is_some_and(|s| s.is_deep_research);
         self.live_content.clear();
         self.live_thinking.clear();
     }
@@ -467,7 +467,7 @@ impl SiloApp {
         let is_calc = lower.starts_with("/calc");
         let is_run = lower.starts_with("/run");
 
-        let session_is_deep = self.active_session().map_or(false, |s| s.is_deep_research);
+        let session_is_deep = self.active_session().is_some_and(|s| s.is_deep_research);
         let effective_deep = is_deep || session_is_deep;
 
         let (user_text, directive_opt, forced_tool) = if is_deep {
@@ -562,11 +562,7 @@ impl SiloApp {
 
         let enable_tools = if !sess.context_config.enable_tools {
             false
-        } else if self.is_deep_active && self.deep_fetch_count >= MAX_DEEP_FETCHES {
-            false
-        } else {
-            true
-        };
+        } else { !(self.is_deep_active && self.deep_fetch_count >= MAX_DEEP_FETCHES) };
 
         let forced_tool = self.forced_tool.take();
         let base_url = self.server_url.clone();
@@ -822,10 +818,10 @@ impl SiloApp {
                         // 2. EMPTY RESPONSE RECOVERY:
                         // If model returned 0-2 tokens (empty response) right after receiving tool output,
                         // do not emit a dead failure note — inject recovery directive and continue synthesis.
-                        let was_after_tool = self.active_session().map_or(false, |sess| {
+                        let was_after_tool = self.active_session().is_some_and(|sess| {
                             sess.messages
                                 .last()
-                                .map_or(false, |m| m.role == MessageRole::Tool)
+                                .is_some_and(|m| m.role == MessageRole::Tool)
                         });
 
                         if trimmed.is_empty() && was_after_tool && self.empty_recovery_count < 2 {

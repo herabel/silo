@@ -212,13 +212,11 @@ pub fn strip_residual_tags(s: &str) -> String {
     }
 
     // 4. Strip quotes
-    if (cleaned.starts_with('"') && cleaned.ends_with('"'))
-        || (cleaned.starts_with('\'') && cleaned.ends_with('\''))
-    {
-        if cleaned.len() >= 2 {
+    if ((cleaned.starts_with('"') && cleaned.ends_with('"'))
+        || (cleaned.starts_with('\'') && cleaned.ends_with('\'')))
+        && cleaned.len() >= 2 {
             cleaned = cleaned[1..cleaned.len() - 1].trim().to_string();
         }
-    }
 
     cleaned
 }
@@ -442,17 +440,15 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                 };
                 let raw_val = clean_input[start_idx..end_idx].trim();
                 let mut clean_val = raw_val.to_string();
-                if (clean_val.starts_with('"') && clean_val.ends_with('"'))
-                    || (clean_val.starts_with('\'') && clean_val.ends_with('\''))
-                {
-                    if clean_val.len() >= 2 {
+                if ((clean_val.starts_with('"') && clean_val.ends_with('"'))
+                    || (clean_val.starts_with('\'') && clean_val.ends_with('\'')))
+                    && clean_val.len() >= 2 {
                         clean_val = clean_val[1..clean_val.len() - 1].to_string();
                         clean_val = clean_val
                             .replace("\\n", "\n")
                             .replace("\\t", "\t")
                             .replace("\\\"", "\"");
                     }
-                }
                 if key != "code" && key != "content" {
                     clean_val = strip_residual_tags(&clean_val);
                 }
@@ -1233,7 +1229,7 @@ pub async fn stream_completion(
                 }
 
                 let is_superseded =
-                    last_text_assistant_idx.map_or(false, |last_idx| idx < last_idx);
+                    last_text_assistant_idx.is_some_and(|last_idx| idx < last_idx);
 
                 if is_superseded {
                     if !trimmed.is_empty() {
@@ -1280,7 +1276,7 @@ pub async fn stream_completion(
             }
             MessageRole::Tool => {
                 let is_superseded =
-                    last_text_assistant_idx.map_or(false, |last_idx| idx < last_idx);
+                    last_text_assistant_idx.is_some_and(|last_idx| idx < last_idx);
                 if !is_superseded {
                     let call_id = m
                         .tool_call_id
@@ -1557,7 +1553,7 @@ pub async fn stream_completion(
             if let Some(json_str) = line.strip_prefix("data: ") {
                 if let Ok(val) = serde_json::from_str::<Value>(json_str) {
                     if let Some(choices) = val.get("choices").and_then(|c| c.as_array()) {
-                        if let Some(first_choice) = choices.get(0) {
+                        if let Some(first_choice) = choices.first() {
                             if let Some(fr) =
                                 first_choice.get("finish_reason").and_then(|f| f.as_str())
                             {

@@ -242,16 +242,13 @@ impl ChatMessage {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Default)]
 pub enum CustomPromptMode {
+    #[default]
     Append,
     Override,
 }
 
-impl Default for CustomPromptMode {
-    fn default() -> Self {
-        CustomPromptMode::Append
-    }
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ContextConfig {
@@ -411,7 +408,7 @@ impl SessionManager {
         if let Some(key) = &self.vault_key {
             // High-performance encrypted binary storage via postcard + AEAD
             let postcard_bytes = postcard::to_allocvec(session)?;
-            let encrypted = key.encrypt(&postcard_bytes).map_err(|e| e)?;
+            let encrypted = key.encrypt(&postcard_bytes)?;
             let silo_path = self.storage_dir.join(format!("{}.silo", session.id));
             fs::write(silo_path, encrypted)?;
 

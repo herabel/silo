@@ -353,11 +353,10 @@ pub fn clean_search_query(raw: &str) -> String {
     }
 
     // Strip quotes
-    if (q.starts_with('"') && q.ends_with('"')) || (q.starts_with('\'') && q.ends_with('\'')) {
-        if q.len() >= 2 {
+    if ((q.starts_with('"') && q.ends_with('"')) || (q.starts_with('\'') && q.ends_with('\'')))
+        && q.len() >= 2 {
             q = q[1..q.len() - 1].trim().to_string();
         }
-    }
 
     // Strip common pseudo prefixes like "query>", "query:", "<query>", "search>", "search:", "q:", "q>"
     let prefixes = [

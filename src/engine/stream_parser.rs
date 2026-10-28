@@ -143,7 +143,7 @@ impl StreamParser {
                         self.state = ParserState::Content;
                         let after_think = &self.buffer[end_think + "</think>".len()..];
                         self.buffer = after_think
-                            .trim_start_matches(|c| c == '\n' || c == '\r')
+                            .trim_start_matches(['\n', '\r'])
                             .to_string();
                         continue;
                     } else {
