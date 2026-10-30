@@ -15,10 +15,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            artifact_name: bice_rs
+            artifact_name: silo
             asset_name: silo-linux-amd64.tar.gz
           - os: windows-latest
-            artifact_name: bice_rs.exe
+            artifact_name: silo.exe
             asset_name: silo-windows-amd64.zip
 
     steps:
