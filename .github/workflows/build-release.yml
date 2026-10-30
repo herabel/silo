@@ -1,0 +1,50 @@
+name: Build and Attach Release Assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build Binary for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            artifact_name: bice_rs
+            asset_name: bice-rs-linux-amd64.tar.gz
+          - os: windows-latest
+            artifact_name: bice_rs.exe
+            asset_name: bice-rs-windows-amd64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libudev-dev
+
+      - name: Build Release Binary
+        run: cargo build --release
+
+      - name: Package Linux Binary
+        if: runner.os == 'Linux'
+        run: |
+          tar -czvf ${{ matrix.asset_name }} -C target/release ${{ matrix.artifact_name }}
+
+      - name: Package Windows Binary
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          Compress-Archive -Path target/release/${{ matrix.artifact_name }} -DestinationPath ${{ matrix.asset_name }}
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ matrix.asset_name }}
