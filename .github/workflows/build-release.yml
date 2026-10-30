@@ -16,10 +16,10 @@ jobs:
         include:
           - os: ubuntu-latest
             artifact_name: bice_rs
-            asset_name: bice-rs-linux-amd64.tar.gz
+            asset_name: silo-linux-amd64.tar.gz
           - os: windows-latest
             artifact_name: bice_rs.exe
-            asset_name: bice-rs-windows-amd64.zip
+            asset_name: silo-windows-amd64.zip
 
     steps:
       - uses: actions/checkout@v4
