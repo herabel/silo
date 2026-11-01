@@ -235,6 +235,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         "executepython" | "python" | "calc" | "eval" => "execute_python",
         "runcommand" | "cmd" | "bash" | "shell" => "run_command",
         "websearch" | "search" | "duckduckgosearch" | "googlesearch" => "web_search",
+        "arxivsearch" | "arxiv" | "searcharxiv" => "arxiv_search",
         "fetchpage" | "fetch" => "fetch_page",
         _ => tool_name,
     };
@@ -255,7 +256,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                             obj.insert("pattern".to_string(), inp);
                         }
                     }
-                    "web_search" => {
+                    "web_search" | "arxiv_search" => {
                         if !obj.contains_key("query") {
                             obj.insert("query".to_string(), inp);
                         }
@@ -312,7 +313,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                             obj.insert("pattern".to_string(), inp);
                         }
                     }
-                    "web_search" => {
+                    "web_search" | "arxiv_search" => {
                         if !obj.contains_key("query") {
                             obj.insert("query".to_string(), inp);
                         }
@@ -424,7 +425,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
     }
 
     // 5. Key-Value parameter lines: key=val or key: val (e.g. path=...\ncontent=...)
-    let known_keys_pattern = r#"(?mi)^(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|input)\s*[:=]\s*(.*)$"#;
+    let known_keys_pattern = r#"(?mi)^(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|limit|max_results|input)\s*[:=]\s*(.*)$"#;
     if let Ok(kv_re) = Regex::new(known_keys_pattern) {
         let matches: Vec<_> = kv_re.captures_iter(clean_input).collect();
         if !matches.is_empty() {
@@ -515,7 +516,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
             fallback_map.insert("pattern".to_string(), Value::String(clean_str));
             fallback_map.insert("path".to_string(), Value::String(".".to_string()));
         }
-        "web_search" => {
+        "web_search" | "arxiv_search" => {
             fallback_map.insert("query".to_string(), Value::String(clean_str));
         }
         "fetch_page" => {
@@ -555,6 +556,8 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
         "bash",
         "web_search",
         "websearch",
+        "arxiv_search",
+        "arxiv",
         "fetch_page",
         "fetchpage",
     ];
@@ -582,6 +585,7 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                 "executepython" | "python" => "execute_python",
                 "runcommand" | "cmd" | "bash" => "run_command",
                 "websearch" => "web_search",
+                "arxivsearch" | "arxiv" => "arxiv_search",
                 "fetchpage" => "fetch_page",
                 _ => tool_tag,
             }
@@ -602,13 +606,14 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
 
     // Format 0: Function call with parens e.g. <function=web_search(query: "...") or web_search(query="...") inside <tool_call>
     if let Ok(fn_call_re) = Regex::new(
-        r#"(?s)(?:<function=|\b)(web_search|search|fetch_page|fetch|execute_python|python|run_command|cmd|read_file|read|write_file|write|list_dir|ls|dir|search_files|grep|search_code)\s*\((.*?)\)(?:>|\s*</parameter>|\s*</function>|\s*</tool_call>|$)"#,
+        r#"(?s)(?:<function=|\b)(arxiv_search|arxiv|search_arxiv|web_search|search|fetch_page|fetch|execute_python|python|run_command|cmd|read_file|read|write_file|write|list_dir|ls|dir|search_files|grep|search_code)\s*\((.*?)\)(?:>|\s*</parameter>|\s*</function>|\s*</tool_call>|$)"#,
     ) {
         for cap in fn_call_re.captures_iter(text) {
             let fn_name = cap[1].to_string();
             let raw_args = cap[2].trim();
             let norm_name = match fn_name.as_str() {
                 "search" => "web_search",
+                "arxiv" | "search_arxiv" => "arxiv_search",
                 "fetch" => "fetch_page",
                 "python" => "execute_python",
                 "cmd" => "run_command",
@@ -692,7 +697,7 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                         args["code"] = Value::String(body_str);
                     } else if fn_name == "run_command" {
                         args["cmd"] = Value::String(body_str);
-                    } else if fn_name == "web_search" {
+                    } else if fn_name == "web_search" || fn_name == "arxiv_search" || fn_name == "arxiv" {
                         args["query"] = Value::String(body_str);
                     } else if fn_name == "fetch_page" {
                         args["url"] = Value::String(body_str);
@@ -730,7 +735,7 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                 json!({ "code": raw_args }).to_string()
             } else if name == "run_command" {
                 json!({ "cmd": raw_args }).to_string()
-            } else if name == "web_search" {
+            } else if name == "web_search" || name == "arxiv_search" || name == "arxiv" {
                 json!({ "query": raw_args }).to_string()
             } else if name == "fetch_page" {
                 json!({ "url": raw_args }).to_string()
@@ -901,6 +906,8 @@ pub fn strip_tool_tags(text: &str) -> String {
         "bash",
         "web_search",
         "websearch",
+        "arxiv_search",
+        "arxiv",
         "fetch_page",
         "fetchpage",
         "tool_call",
@@ -1040,6 +1047,21 @@ pub fn build_tool_definitions() -> Vec<Value> {
                         "cwd": {"type": "string", "description": "Optional working directory path"}
                     },
                     "required": ["cmd"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "arxiv_search",
+                "description": "Searches peer-reviewed papers on arXiv. Supports boolean operators (AND, OR) and exact phrases in quotes. For best results, use 2-4 core technical keywords (e.g. 'chunking AND deduplication', '\"prompt injection\" AND defense', or 'Kyber AND \"side-channel\"'). Do NOT pass long conversational phrases.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Academic search query or topic (e.g. 'content-defined chunking fastcdc' or 'indirect prompt injection')"},
+                        "limit": {"type": "integer", "description": "Number of papers to retrieve (default: 4, max: 10)"}
+                    },
+                    "required": ["query"]
                 }
             }
         }),

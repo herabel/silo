@@ -21,7 +21,7 @@ const FONT_JETBRAINS_MONO: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono
 const DEEP_RESEARCH_DIRECTIVE: &str = r#"DEEP RESEARCH DIRECTIVE:
 You are an investigative technical analyst. Follow a rigorous multi-phase research approach:
 1. IMMEDIATE TOOL DELEGATION: Never perform mental arithmetic, formula derivations, or parameter checks in <think>. Immediately offload all math, size calculations, and data processing to `execute_python`.
-2. Scout: Run `web_search` queries covering technical specifications, standards, and data.
+2. Scout: For academic papers, preprints, and algorithmic proofs, invoke `arxiv_search(query)`. For documentation and live web articles, invoke `web_search(query)`. KEEP SEARCH QUERIES SHORT AND FOCUSED (3-6 keywords max, e.g. "FastCDC chunking dual mask" or "indirect prompt injection"). Never stuff multiple years or filler words into search queries.
 3. Read: Call `fetch_page(url)` on relevant URLs from search results to inspect source documents.
 4. Compute: Validate mathematical models or verify equations using `execute_python`.
 5. STRICT TOOL LOOP ENFORCEMENT: Never output conversational filler or unexecuted promises in chat (such as "Let me fetch...", "I will search...", "Now checking..."). Always invoke the tool call directly. Only output natural language markdown when synthesizing the final comprehensive dossier.
@@ -777,7 +777,7 @@ impl SiloApp {
                                 sess.messages
                                     .push(ChatMessage::assistant(&content, thinking));
                                 if fetch_count < MAX_DEEP_FETCHES {
-                                    sess.messages.push(ChatMessage::system("[CRITICAL RESEARCH DIRECTIVE]: Do NOT output conversational filler or statements of intent (such as 'Let me fetch...', 'I will look into...'). You MUST IMMEDIATELY invoke `web_search(query)` or `fetch_page(url)` as a structured tool call. If all research is truly finished, output the final dossier immediately."));
+                                    sess.messages.push(ChatMessage::system("[CRITICAL RESEARCH DIRECTIVE]: Do NOT output conversational filler or statements of intent (such as 'Let me fetch...', 'I will look into...'). You MUST IMMEDIATELY invoke `arxiv_search(query)`, `web_search(query)`, or `fetch_page(url)` as a structured tool call. If all research is truly finished, output the final dossier immediately."));
                                 } else {
                                     sess.messages.push(ChatMessage::system("[FINAL DOSSIER REQUIRED]: The research gathering phase is complete. Do NOT announce future searches. Synthesize and write the exhaustive, multi-section final research dossier now with all findings, metrics, and strategic conclusions."));
                                 }
@@ -801,7 +801,7 @@ impl SiloApp {
                                     // Check if model in thinking wanted to use tools or research:
                                     let th_lower = th.to_lowercase();
                                     let wants_tools = self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES && (
-                                        th_lower.contains("search") || th_lower.contains("fetch") || 
+                                        th_lower.contains("search") || th_lower.contains("arxiv") || th_lower.contains("paper") || th_lower.contains("fetch") || 
                                         th_lower.contains("python") || th_lower.contains("run") ||
                                         th_lower.contains("tool") || th_lower.contains("calculate")
                                     );
@@ -812,7 +812,7 @@ impl SiloApp {
                                         
                                         if wants_tools {
                                             sess.messages.push(ChatMessage::system(
-                                                "[ACTION REQUIRED]: You reasoned about calling tools, but did not invoke them. You MUST emit the structured tool call now (e.g. `web_search`, `fetch_page`, or `execute_python`) to gather evidence before writing the final report."
+                                                "[ACTION REQUIRED]: You reasoned about calling tools, but did not invoke them. You MUST emit the structured tool call now (e.g. `arxiv_search`, `web_search`, `fetch_page`, or `execute_python`) to gather evidence before writing the final report."
                                             ));
                                         } else {
                                             sess.messages.push(ChatMessage::system(
@@ -955,7 +955,16 @@ impl SiloApp {
             tc.output = Some(effective_output.clone());
         }
 
-        let instruction = if tool_name == "web_search" || tool_name == "search" {
+        let instruction = if tool_name == "arxiv_search" || tool_name == "arxiv" {
+            if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
+                format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.", effective_output, MAX_DEEP_FETCHES - self.deep_fetch_count)
+            } else {
+                format!(
+                    "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
+                    effective_output
+                )
+            }
+        } else if tool_name == "web_search" || tool_name == "search" {
             if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
                 format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", effective_output, MAX_DEEP_FETCHES - self.deep_fetch_count)
             } else {
@@ -2258,7 +2267,7 @@ impl eframe::App for SiloApp {
 
                                                                         let lang = if tc.name == "execute_python" {
                                                                             "python"
-                                                                        } else if tc.name == "web_search" || tc.name == "search" {
+                                                                        } else if tc.name == "web_search" || tc.name == "search" || tc.name == "arxiv_search" || tc.name == "arxiv" {
                                                                             "text"
                                                                         } else if tc.name == "fetch_page" || tc.name == "fetch" {
                                                                             "text"

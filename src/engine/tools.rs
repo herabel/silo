@@ -747,6 +747,8 @@ fn urlencoding_encode(input: &str) -> String {
 }
 
 pub fn extract_query_arg(args_str: &str) -> String {
+    let mut raw_extracted = args_str.to_string();
+
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
         if let Some(obj) = val.as_object() {
             let candidate_keys = [
@@ -764,13 +766,16 @@ pub fn extract_query_arg(args_str: &str) -> String {
             ];
             for k in &candidate_keys {
                 if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
-                    return v.to_string();
+                    raw_extracted = v.to_string();
+                    break;
                 }
             }
-            // If no standard key, grab the first string property
-            for (_k, v) in obj {
-                if let Some(s) = v.as_str() {
-                    return s.to_string();
+            if raw_extracted == args_str {
+                for (_k, v) in obj {
+                    if let Some(s) = v.as_str() {
+                        raw_extracted = s.to_string();
+                        break;
+                    }
                 }
             }
         }
@@ -791,17 +796,38 @@ pub fn extract_query_arg(args_str: &str) -> String {
             ];
             for k in &candidate_keys {
                 if let Some(v) = obj.get(*k).and_then(|v| v.as_str()) {
-                    return v.to_string();
+                    raw_extracted = v.to_string();
+                    break;
                 }
             }
-            for (_k, v) in obj {
-                if let Some(s) = v.as_str() {
-                    return s.to_string();
+            if raw_extracted == args_str {
+                for (_k, v) in obj {
+                    if let Some(s) = v.as_str() {
+                        raw_extracted = s.to_string();
+                        break;
+                    }
                 }
             }
         }
     }
-    args_str.to_string()
+
+    // Strip trailing `, limit=...` or `, max_results=...` if model passed comma-separated kwargs
+    let mut cleaned = raw_extracted.trim().to_string();
+    if let Ok(re_limit) = regex::Regex::new(r#"(?i),\s*(?:limit|max_results)\s*=\s*\d+"#) {
+        cleaned = re_limit.replace_all(&cleaned, "").trim().to_string();
+    }
+    // Strip leading `query=` or `q=` if present
+    if let Ok(re_q) = regex::Regex::new(r#"(?i)^(?:query|q)\s*=\s*"#) {
+        cleaned = re_q.replace(&cleaned, "").trim().to_string();
+    }
+    // Strip wrapping quotes if entire query was quoted
+    if ((cleaned.starts_with('"') && cleaned.ends_with('"'))
+        || (cleaned.starts_with('\'') && cleaned.ends_with('\'')))
+        && cleaned.len() >= 2
+    {
+        cleaned = cleaned[1..cleaned.len() - 1].trim().to_string();
+    }
+    cleaned
 }
 
 pub fn extract_url_arg(args_str: &str) -> String {
@@ -832,6 +858,330 @@ pub fn extract_url_arg(args_str: &str) -> String {
         }
     }
     args_str.to_string()
+}
+
+pub fn extract_limit_arg(args_str: &str) -> Option<usize> {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+        if let Some(obj) = val.as_object() {
+            if let Some(l) = obj.get("limit").or_else(|| obj.get("max_results")).and_then(|v| v.as_u64()) {
+                return Some(l as usize);
+            }
+        }
+    } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+        if let Some(obj) = val.as_object() {
+            if let Some(l) = obj.get("limit").or_else(|| obj.get("max_results")).and_then(|v| v.as_u64()) {
+                return Some(l as usize);
+            }
+        }
+    }
+    // Regex fallback for loose kwargs: limit=15 or max_results: 15
+    if let Ok(re) = regex::Regex::new(r#"(?i)(?:limit|max_results)\s*[:=]\s*(\d+)"#) {
+        if let Some(cap) = re.captures(args_str) {
+            if let Ok(num) = cap[1].parse::<usize>() {
+                return Some(num);
+            }
+        }
+    }
+    None
+}
+
+async fn fetch_arxiv_xml(client: &reqwest::Client, search_query: &str, max_results: usize) -> Result<String, String> {
+    let url = format!(
+        "https://export.arxiv.org/api/query?search_query={}&start=0&max_results={}&sortBy=relevance&sortOrder=descending",
+        search_query, max_results
+    );
+    let resp = client.get(&url).send().await.map_err(|e| format!("Failed to reach arXiv API: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(format!("arXiv API returned HTTP {}", resp.status()));
+    }
+    resp.text().await.map_err(|e| format!("Failed to read arXiv response body: {}", e))
+}
+
+fn parse_arxiv_entries(xml: &str) -> Vec<String> {
+    let entry_re = match regex::Regex::new(r"(?s)<entry>(.*?)</entry>") {
+        Ok(r) => r,
+        Err(_) => return Vec::new(),
+    };
+
+    let title_re = regex::Regex::new(r"(?s)<title>(.*?)</title>").unwrap();
+    let summary_re = regex::Regex::new(r"(?s)<summary>(.*?)</summary>").unwrap();
+    let published_re = regex::Regex::new(r"<published>(.*?)</published>").unwrap();
+    let name_re = regex::Regex::new(r"<name>(.*?)</name>").unwrap();
+    let id_re = regex::Regex::new(r"<id>(.*?)</id>").unwrap();
+
+    let mut papers = Vec::new();
+
+    for cap in entry_re.captures_iter(xml) {
+        let entry_str = &cap[1];
+
+        let raw_title = title_re
+            .captures(entry_str)
+            .map(|c| c[1].to_string())
+            .unwrap_or_default();
+        let title: String = raw_title.split_whitespace().collect::<Vec<_>>().join(" ");
+        if title.is_empty() {
+            continue;
+        }
+
+        let raw_summary = summary_re
+            .captures(entry_str)
+            .map(|c| c[1].to_string())
+            .unwrap_or_default();
+        let summary: String = raw_summary.split_whitespace().collect::<Vec<_>>().join(" ");
+
+        let published = published_re
+            .captures(entry_str)
+            .map(|c| {
+                let p = &c[1];
+                if p.len() >= 10 {
+                    p[..10].to_string()
+                } else {
+                    p.to_string()
+                }
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        let authors: Vec<String> = name_re
+            .captures_iter(entry_str)
+            .map(|c| c[1].trim().to_string())
+            .collect();
+        let author_str = if authors.is_empty() {
+            "Unknown".to_string()
+        } else if authors.len() > 3 {
+            format!("{}, et al.", authors[..3].join(", "))
+        } else {
+            authors.join(", ")
+        };
+
+        let link = id_re
+            .captures(entry_str)
+            .map(|c| c[1].trim().to_string())
+            .unwrap_or_default();
+
+        let arxiv_id = if let Some(pos) = link.rfind('/') {
+            link[pos + 1..].to_string()
+        } else {
+            link.clone()
+        };
+
+        papers.push(format!(
+            "### [{}] {}
+- **arXiv ID:** `{}` | **Published:** {}
+- **Authors:** {}
+- **URL:** {}
+- **Abstract:**
+{}
+",
+            papers.len() + 1,
+            title,
+            arxiv_id,
+            published,
+            author_str,
+            link,
+            summary
+        ));
+    }
+    papers
+}
+
+pub async fn run_arxiv_search(raw_query: &str, limit: usize) -> (bool, String) {
+    let query = extract_query_arg(raw_query);
+    if query.is_empty() {
+        return (false, "arXiv query is empty.".to_string());
+    }
+
+    let max_results = limit.clamp(1, 15);
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(12))
+        .user_agent("Silo-ResearchAgent/1.0 (Desktop AI Workbench; https://github.com/herabel/silo)")
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => return (false, format!("Failed to create HTTP client: {}", e)),
+    };
+
+    // 1. Direct pass-through if model provided explicit arXiv operators
+    let has_explicit_ops = query.contains(" AND ")
+        || query.contains(" OR ")
+        || query.contains(" ANDNOT ")
+        || query.contains("ti:")
+        || query.contains("abs:")
+        || query.contains("cat:")
+        || query.contains("au:");
+
+    if has_explicit_ops {
+        let direct_query = query.replace(' ', "+").replace('"', "%22");
+        if let Ok(xml) = fetch_arxiv_xml(&client, &direct_query, max_results).await {
+            let papers = parse_arxiv_entries(&xml);
+            if !papers.is_empty() {
+                let result = format!(
+                    "Found {} peer-reviewed/preprint papers on arXiv for '{}':
+
+{}",
+                    papers.len(),
+                    query,
+                    papers.join("
+---
+
+")
+                );
+                return (true, result);
+            }
+        }
+    }
+
+    // 2. Intelligent keyword and phrase processing
+    const ARX_STOPWORDS: &[&str] = &[
+        "a", "an", "the", "in", "on", "of", "for", "to", "and", "or", "with", "by", "at", "from",
+        "is", "are", "was", "were", "be", "been", "as", "into", "through", "over", "between",
+        "high", "throughput", "fast", "novel", "new", "recent", "study", "analysis", "approach",
+        "framework", "method", "methods", "system", "systems", "survey", "evaluation", "based",
+        "using", "towards", "performance", "effective", "efficient", "efficiently", "improved",
+        "paper", "papers", "preprint", "arxiv", "distribution", "dual", "comprehensive", "review",
+        "algorithm", "algorithms", "optimization", "optimizations", "large", "small"
+    ];
+
+    // Check for quoted subphrases e.g. "content-defined chunking" or "prompt injection"
+    let mut exact_phrases = Vec::new();
+    if let Ok(quote_re) = regex::Regex::new(r#""([^"]+)""#) {
+        for cap in quote_re.captures_iter(&query) {
+            let p = cap[1].trim();
+            if !p.is_empty() {
+                exact_phrases.push(format!("%22{}%22", p.replace(' ', "+")));
+            }
+        }
+    }
+
+    let raw_tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|w| {
+            w.chars()
+                .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+                .collect::<String>()
+        })
+        .filter(|w| !w.is_empty() && w.len() >= 3)
+        .collect();
+
+    let mut filtered_tokens: Vec<String> = raw_tokens
+        .iter()
+        .filter(|w| !ARX_STOPWORDS.contains(&w.to_lowercase().as_str()))
+        .cloned()
+        .collect();
+
+    if filtered_tokens.is_empty() {
+        filtered_tokens = raw_tokens;
+    }
+
+    // Sort tokens by length descending (longest = most specific domain terms e.g. "content-defined", "chunking", "deduplication")
+    filtered_tokens.sort_by(|a, b| b.len().cmp(&a.len()));
+
+    // Tier 1: Exact quoted phrases if any
+    if !exact_phrases.is_empty() {
+        let phrase_query = exact_phrases
+            .iter()
+            .map(|p| format!("all:{}", p))
+            .collect::<Vec<_>>()
+            .join("+AND+");
+        if let Ok(xml) = fetch_arxiv_xml(&client, &phrase_query, max_results).await {
+            let papers = parse_arxiv_entries(&xml);
+            if !papers.is_empty() {
+                let result = format!(
+                    "Found {} peer-reviewed/preprint papers on arXiv for '{}':
+
+{}",
+                    papers.len(),
+                    query,
+                    papers.join("
+---
+
+")
+                );
+                return (true, result);
+            }
+        }
+    }
+
+    // Tier 2: Title and Abstract targeted conjunction on top 2 domain terms
+    if filtered_tokens.len() >= 2 {
+        let t1 = &filtered_tokens[0];
+        let t2 = &filtered_tokens[1];
+        let tier2_query = format!("(ti:{}+OR+abs:{})+AND+(ti:{}+OR+abs:{})", t1, t1, t2, t2);
+        if let Ok(xml) = fetch_arxiv_xml(&client, &tier2_query, max_results).await {
+            let papers = parse_arxiv_entries(&xml);
+            if !papers.is_empty() {
+                let result = format!(
+                    "Found {} peer-reviewed/preprint papers on arXiv for '{}':
+
+{}",
+                    papers.len(),
+                    query,
+                    papers.join("
+---
+
+")
+                );
+                return (true, result);
+            }
+        }
+    }
+
+    // Tier 3: Conjunction across top terms in all:
+    let effective_terms = if filtered_tokens.len() > 3 {
+        &filtered_tokens[..3]
+    } else {
+        &filtered_tokens[..]
+    };
+
+    let tier3_query = effective_terms
+        .iter()
+        .map(|t| format!("all:{}", t))
+        .collect::<Vec<_>>()
+        .join("+AND+");
+
+    if let Ok(xml) = fetch_arxiv_xml(&client, &tier3_query, max_results).await {
+        let papers = parse_arxiv_entries(&xml);
+        if !papers.is_empty() {
+            let result = format!(
+                "Found {} peer-reviewed/preprint papers on arXiv for '{}':
+
+{}",
+                papers.len(),
+                query,
+                papers.join("
+---
+
+")
+            );
+            return (true, result);
+        }
+    }
+
+    // Tier 4: Targeted search for the primary anchor in Title or Abstract (NEVER unconstrained OR across all words)
+    if let Some(primary) = filtered_tokens.first() {
+        let tier4_query = format!("ti:{}+OR+abs:{}", primary, primary);
+        if let Ok(xml) = fetch_arxiv_xml(&client, &tier4_query, max_results).await {
+            let papers = parse_arxiv_entries(&xml);
+            if !papers.is_empty() {
+                let result = format!(
+                    "Found {} peer-reviewed/preprint papers on arXiv for '{}':
+
+{}",
+                    papers.len(),
+                    query,
+                    papers.join("
+---
+
+")
+                );
+                return (true, result);
+            }
+        }
+    }
+
+    (
+        false,
+        format!("No relevant arXiv papers found matching query: '{}'", query),
+    )
 }
 
 pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
@@ -1507,6 +1857,13 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
     {
         let url = extract_url_arg(args_str);
         run_web_scout_fetch(&url).await
+    } else if lower_name == "arxiv_search"
+        || lower_name == "arxiv"
+        || lower_name == "search_arxiv"
+    {
+        let query = extract_query_arg(args_str);
+        let limit = extract_limit_arg(args_str).unwrap_or(4);
+        run_arxiv_search(&query, limit).await
     } else {
         (false, format!("Unknown tool: {}", name))
     }
@@ -1528,5 +1885,17 @@ mod tests {
         let (ok, res) = run_web_search("новости космонавтики", 3).await;
         eprintln!("RUSSIAN SEARCH RESULT: ok={}, len={}", ok, res.len());
         assert!(ok, "Search failed: {}", res);
+    }
+
+    #[tokio::test]
+    async fn test_arxiv_search() {
+        let (ok, res) = run_arxiv_search(
+            "\"dual mask boundary distribution content-defined chunking high throughput\", limit=15",
+            3,
+        ).await;
+        println!("\n=== ARXIV SEARCH RESULT ===\n{}\n===========================\n", res);
+        assert!(ok, "arXiv search failed: {}", res);
+        assert!(!res.contains("Face Mask"), "Should not match Face Mask");
+        assert!(res.contains("Chunk") || res.contains("boundary") || res.contains("content-defined"));
     }
 }

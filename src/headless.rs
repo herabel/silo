@@ -537,7 +537,16 @@ pub async fn run_agent_session(
                 out.len()
             );
 
-            let instruction = if tc.name == "web_search" || tc.name == "search" {
+            let instruction = if tc.name == "arxiv_search" || tc.name == "arxiv" {
+                if is_deep && fetch_count < max_fetches {
+                    format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.", out, max_fetches - fetch_count)
+                } else {
+                    format!(
+                        "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
+                        out
+                    )
+                }
+            } else if tc.name == "web_search" || tc.name == "search" {
                 if is_deep && fetch_count < max_fetches {
                     format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", out, max_fetches - fetch_count)
                 } else {

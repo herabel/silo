@@ -190,6 +190,10 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
                 "- `web_search(query)`: Search web documentation, papers, and current events."
                     .to_string(),
             );
+            directives.push(
+                "- `arxiv_search(query, limit)`: Search peer-reviewed and preprint scientific papers on arXiv (Computer Science, AI, Cryptography, Math, Systems, Security). Returns titles, authors, dates, and full abstracts."
+                    .to_string(),
+            );
             directives
                 .push("- `fetch_page(url)`: Read webpage or paper markdown content.".to_string());
         } else {
