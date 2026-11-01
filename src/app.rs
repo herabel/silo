@@ -792,18 +792,33 @@ impl SiloApp {
                         }
 
                         // 1. REASONING MATERIALIZATION NUDGE:
-                        // If model reasoned extensively (thinking is rich), but generated NO markdown text,
-                        // automatically prompt it to synthesize its internal reasoning into the final markdown report!
+                        // If model reasoned extensively (thinking is rich), but generated NO markdown text and NO tool calls:
                         if trimmed.is_empty() {
                             if let Some(th) = &thinking {
                                 if th.trim().len() > 100 && self.empty_recovery_count < 2 {
                                     self.empty_recovery_count += 1;
+                                    
+                                    // Check if model in thinking wanted to use tools or research:
+                                    let th_lower = th.to_lowercase();
+                                    let wants_tools = self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES && (
+                                        th_lower.contains("search") || th_lower.contains("fetch") || 
+                                        th_lower.contains("python") || th_lower.contains("run") ||
+                                        th_lower.contains("tool") || th_lower.contains("calculate")
+                                    );
+
                                     if let Some(sess) = self.active_session_mut() {
                                         sess.messages
                                             .push(ChatMessage::assistant("", Some(th.clone())));
-                                        sess.messages.push(ChatMessage::system(
-                                            "[SYNTHESIZE DOSSIER]: Your internal reasoning and evidence gathering are complete. Now write the exhaustive, definitive final markdown dossier to the user immediately. Present all findings, model specifications, VRAM math, tokens/second, and concrete links. Do NOT call any more tools and do NOT output conversational filler."
-                                        ));
+                                        
+                                        if wants_tools {
+                                            sess.messages.push(ChatMessage::system(
+                                                "[ACTION REQUIRED]: You reasoned about calling tools, but did not invoke them. You MUST emit the structured tool call now (e.g. `web_search`, `fetch_page`, or `execute_python`) to gather evidence before writing the final report."
+                                            ));
+                                        } else {
+                                            sess.messages.push(ChatMessage::system(
+                                                "[SYNTHESIZE DOSSIER]: Your internal reasoning and evidence gathering are complete. Now write the exhaustive, definitive final markdown dossier to the user immediately. Present all findings, model specifications, VRAM math, tokens/second, and concrete links. Do NOT call any more tools and do NOT output conversational filler."
+                                            ));
+                                        }
                                         sess.updated_at = chrono::Utc::now();
                                     }
                                     self.save_active_session();
