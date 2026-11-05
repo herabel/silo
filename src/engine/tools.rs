@@ -1272,11 +1272,39 @@ pub async fn run_read_file(
         return (false, "Error: path is required for read_file".to_string());
     }
 
-    let p = Path::new(clean_path);
-    if !p.exists() {
+    let mut resolved_path = PathBuf::from(clean_path);
+    if !resolved_path.exists() {
+        // 1. Strip current working directory if path is absolute but file wasn't found in CWD
+        let mut rel_str = clean_path;
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Ok(rel) = Path::new(clean_path).strip_prefix(&cwd) {
+                rel_str = rel.to_str().unwrap_or(clean_path);
+            }
+        }
+        let rel_path = Path::new(rel_str.trim_start_matches('\\').trim_start_matches('/'));
+
+        // 2. Search inside skills directories
+        let skills_dir = crate::engine::skills::get_skills_dir();
+        if skills_dir.exists() {
+            let direct_skill_path = skills_dir.join(rel_path);
+            if direct_skill_path.exists() && direct_skill_path.is_file() {
+                resolved_path = direct_skill_path;
+            } else if let Ok(entries) = std::fs::read_dir(&skills_dir) {
+                for entry in entries.flatten() {
+                    let cand = entry.path().join(rel_path);
+                    if cand.exists() && cand.is_file() {
+                        resolved_path = cand;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if !resolved_path.exists() {
         return (false, format!("Error: File not found: {}", clean_path));
     }
-    if p.is_dir() {
+    if resolved_path.is_dir() {
         return (
             false,
             format!(
@@ -1286,7 +1314,7 @@ pub async fn run_read_file(
         );
     }
 
-    let data = match tokio::fs::read(p).await {
+    let data = match tokio::fs::read(&resolved_path).await {
         Ok(d) => d,
         Err(e) => {
             return (
@@ -1864,6 +1892,71 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
         let query = extract_query_arg(args_str);
         let limit = extract_limit_arg(args_str).unwrap_or(4);
         run_arxiv_search(&query, limit).await
+    } else if lower_name == "run_skill" || lower_name == "skill" {
+        let (skill, script, args) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+            let sk = val
+                .get("skill")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let sc = val
+                .get("script")
+                .or_else(|| val.get("cmd"))
+                .or_else(|| val.get("file"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let a: Vec<String> = if let Some(arr) = val.get("args").and_then(|v| v.as_array()) {
+                arr.iter()
+                    .filter_map(|x| x.as_str().map(|s| s.to_string()))
+                    .collect()
+            } else if let Some(s) = val.get("args").and_then(|v| v.as_str()) {
+                s.split_whitespace().map(|x| x.to_string()).collect()
+            } else {
+                Vec::new()
+            };
+            (sk, sc, a)
+        } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+            let sk = val
+                .get("skill")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let sc = val
+                .get("script")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            (sk, sc, Vec::new())
+        } else {
+            let mut sk = String::new();
+            let mut sc = String::new();
+            let mut a = Vec::new();
+            for line in args_str.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("skill=") {
+                    sk = rest.trim_matches('"').trim_matches('\'').to_string();
+                } else if let Some(rest) = trimmed.strip_prefix("script=") {
+                    sc = rest.trim_matches('"').trim_matches('\'').to_string();
+                } else if let Some(rest) = trimmed.strip_prefix("args=") {
+                    let raw_a = rest.trim_matches('"').trim_matches('\'');
+                    a = raw_a.split_whitespace().map(|s| s.to_string()).collect();
+                }
+            }
+            if sk.is_empty() {
+                let installed = crate::engine::skills::list_installed_skills();
+                sk = installed.first().map(|s| s.name.clone()).unwrap_or_default();
+            }
+            if sc.is_empty() && !args_str.contains('=') {
+                sc = args_str.trim().to_string();
+            }
+            (sk, sc, a)
+        };
+        if skill.is_empty() || script.is_empty() {
+            (false, r#"Usage: run_skill with {"skill": "...", "script": "...", "args": [...]}"#.to_string())
+        } else {
+            crate::engine::skills::run_skill_script(&skill, &script, &args).await
+        }
     } else {
         (false, format!("Unknown tool: {}", name))
     }
@@ -1897,5 +1990,10 @@ mod tests {
         assert!(ok, "arXiv search failed: {}", res);
         assert!(!res.contains("Face Mask"), "Should not match Face Mask");
         assert!(res.contains("Chunk") || res.contains("boundary") || res.contains("content-defined"));
+    }
+
+    #[test]
+    fn test_skill_discovery() {
+        let _ = crate::engine::skills::list_installed_skills();
     }
 }

@@ -39,6 +39,11 @@ The user requested a host command execution. You MUST immediately invoke `run_co
 Do NOT write shell commands in chat without calling the `run_command` tool.
 Once the execution output is returned, inspect stdout/stderr and present the results."#;
 
+const SKILL_DIRECTIVE: &str = r#"[SKILL DIRECTIVE]:
+The user requested an agent skill execution. You MUST immediately invoke `run_skill(skill, script, args)` to execute the skill script.
+Do NOT write manual code or output conversational filler when a dedicated skill is invoked.
+Once the skill output is returned, review the output and present the result to the user."#;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RollbackTarget {
     EditUser(String),
@@ -466,6 +471,7 @@ impl SiloApp {
         let is_deep = lower.starts_with("/deep");
         let is_calc = lower.starts_with("/calc");
         let is_run = lower.starts_with("/run");
+        let is_skill = lower.starts_with("/skill");
 
         let session_is_deep = self.active_session().is_some_and(|s| s.is_deep_research);
         let effective_deep = is_deep || session_is_deep;
@@ -478,6 +484,18 @@ impl SiloApp {
                 topic
             };
             (effective, Some(DEEP_RESEARCH_DIRECTIVE), None)
+        } else if is_skill {
+            let topic = raw_text[6..].trim().to_string();
+            let effective = if topic.is_empty() {
+                "Execute the installed skill".to_string()
+            } else {
+                topic
+            };
+            (
+                effective,
+                Some(SKILL_DIRECTIVE),
+                Some("run_skill".to_string()),
+            )
         } else if session_is_deep {
             // Continuation turn in a persistent Deep Research session:
             // don't reinject the massive directive, keep user input natural while preserving tool mode
@@ -559,6 +577,11 @@ impl SiloApp {
         let model = self.selected_model.clone();
         let system_prompt = build_configured_system_prompt(&sess.context_config);
         let messages = sess.messages.clone();
+
+        // Register active image bytes in secure in-memory context for tools
+        let active_img_bytes = sess.messages.iter().rev()
+            .find_map(|m| m.images.first().and_then(|img| img.raw_bytes()));
+        crate::engine::set_active_session_image(active_img_bytes);
 
         let enable_tools = if !sess.context_config.enable_tools {
             false
@@ -988,6 +1011,11 @@ impl SiloApp {
             } else {
                 format!("Python Execution Result:\n{}\n\n[INSTRUCTION]: Use this exact numerical result to formulate your final response to the user.", effective_output)
             }
+        } else if tool_name == "run_skill" || tool_name == "skill" {
+            format!(
+                "Skill Execution Output:\n{}\n\n[SKILL GUIDANCE]: Skill script finished execution. Review the output above. If additional skill scripts or tools are needed, invoke them. Otherwise, formulate your final response to the user.",
+                effective_output
+            )
         } else {
             format!("Command Execution Result:\n{}\n\n[INSTRUCTION]: Inspect stdout/stderr. Proceed with the task.", effective_output)
         };
@@ -1902,7 +1930,7 @@ impl eframe::App for SiloApp {
                             .show(ui, |ui| {
                                 ui.add(
                                     egui::TextEdit::multiline(&mut self.input_text)
-                                        .hint_text("Ask anything, or run /deep, /calc, /run... (Ctrl+Enter to send)")
+                                        .hint_text("Ask anything, or run /deep, /calc, /run, /skill... (Ctrl+Enter to send)")
                                         .desired_rows(2)
                                         .desired_width(f32::INFINITY)
                                         .font(egui::TextStyle::Body)
@@ -1941,6 +1969,9 @@ impl eframe::App for SiloApp {
 
                             if pill(ui, "🔬 /deep", Color32::from_rgb(99, 102, 241)).clicked() {
                                 self.input_text = "/deep ".to_string();
+                            }
+                            if pill(ui, "🧩 /skill", Color32::from_rgb(244, 63, 94)).on_hover_text("Execute installed agent skill script").clicked() {
+                                self.input_text = "/skill ".to_string();
                             }
                             if pill(ui, "⚡ /calc", Color32::from_rgb(251, 191, 36)).clicked() {
                                 self.input_text = "/calc ".to_string();

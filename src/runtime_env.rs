@@ -196,6 +196,15 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
             );
             directives
                 .push("- `fetch_page(url)`: Read webpage or paper markdown content.".to_string());
+
+            let installed_skills = crate::engine::skills::list_installed_skills();
+            if !installed_skills.is_empty() {
+                directives.push("- `run_skill(skill, script, args)`: Run an installed agent skill script in an isolated environment via 'uv run'.".to_string());
+                for s in installed_skills {
+                    directives.push(format!("  * Available skill: '{}' - {}", s.name, s.description));
+                }
+                directives.push("- ATTACHMENT IN-MEMORY BUFFER: Any attached images or payloads are securely held in volatile RAM under the virtual alias 'photo.png'. They are NOT stored as physical plaintext files in the workspace or TEMP directory. If an installed skill requires an image or file path, pass 'photo.png' as the argument. Silo's memory bridge will stream the in-RAM buffer directly into the skill process.".to_string());
+            }
         } else {
             directives.push("4. PURE TEXT / REASONING MODE: Tools are disabled for this session. Provide complete, self-contained answers directly without invoking tool tags.".to_string());
         }
