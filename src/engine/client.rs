@@ -237,8 +237,64 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         "websearch" | "search" | "duckduckgosearch" | "googlesearch" => "web_search",
         "arxivsearch" | "arxiv" | "searcharxiv" => "arxiv_search",
         "fetchpage" | "fetch" => "fetch_page",
+        "runskill" | "skill" => "run_skill",
         _ => tool_name,
     };
+
+    // 0. Parse XML parameter blocks: <parameter=name>...</parameter> or <parameter name="name">...</parameter>
+    if raw_trimmed.contains("<parameter") {
+        let mut param_map = serde_json::Map::new();
+        let mut rest = raw_trimmed;
+        while let Some(open_idx) = rest.find("<parameter") {
+            let after_open = &rest[open_idx + 10..];
+            if let Some(gt_idx) = after_open.find('>') {
+                let tag_attr = after_open[..gt_idx].trim();
+                let key = if let Some(stripped) = tag_attr.strip_prefix('=') {
+                    stripped.trim_matches('"').trim_matches('\'').trim().to_lowercase()
+                } else if let Some(stripped) = tag_attr.strip_prefix("name=") {
+                    stripped.trim_matches('"').trim_matches('\'').trim().to_lowercase()
+                } else if let Some(name_pos) = tag_attr.find("name=") {
+                    tag_attr[name_pos + 5..].trim_matches('"').trim_matches('\'').trim().to_lowercase()
+                } else {
+                    String::new()
+                };
+
+                let body_start = &after_open[gt_idx + 1..];
+                let (val_str, next_pos) = if let Some(close_idx) = body_start.find("</parameter>") {
+                    (&body_start[..close_idx], open_idx + 10 + gt_idx + 1 + close_idx + 12)
+                } else if let Some(next_open) = body_start.find("<parameter") {
+                    (&body_start[..next_open], open_idx + 10 + gt_idx + 1 + next_open)
+                } else {
+                    (body_start, rest.len())
+                };
+
+                if !key.is_empty() {
+                    let mut clean_val = val_str.trim().to_string();
+                    if key != "code" && key != "content" {
+                        clean_val = strip_residual_tags(&clean_val);
+                    }
+                    if key == "args" {
+                        let items: Vec<Value> = clean_val.split_whitespace().map(|x| json!(x)).collect();
+                        param_map.insert(key, Value::Array(items));
+                    } else if key == "start_line" || key == "end_line" || key == "depth" {
+                        if let Ok(num) = clean_val.parse::<i64>() {
+                            param_map.insert(key, json!(num));
+                        } else {
+                            param_map.insert(key, Value::String(clean_val));
+                        }
+                    } else {
+                        param_map.insert(key, Value::String(clean_val));
+                    }
+                }
+                rest = &rest[next_pos.min(rest.len())..];
+            } else {
+                break;
+            }
+        }
+        if !param_map.is_empty() {
+            return serde_json::to_string(&Value::Object(param_map)).unwrap_or_else(|_| "{}".to_string());
+        }
+    }
 
     // 1. If valid JSON object, check and clean string fields
     if let Ok(mut val) = serde_json::from_str::<Value>(raw_trimmed) {
@@ -274,6 +330,20 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                     "execute_python" => {
                         if !obj.contains_key("code") {
                             obj.insert("code".to_string(), inp);
+                        }
+                    }
+                    "run_skill" => {
+                        let installed = crate::engine::skills::list_installed_skills();
+                        if !obj.contains_key("skill") {
+                            if let Some(first) = installed.first() {
+                                obj.insert("skill".to_string(), json!(first.name));
+                            }
+                        }
+                        if !obj.contains_key("script") {
+                            obj.insert("script".to_string(), inp);
+                        }
+                        if !obj.contains_key("args") {
+                            obj.insert("args".to_string(), json!([]));
                         }
                     }
                     _ => {}
@@ -333,6 +403,20 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                             obj.insert("code".to_string(), inp);
                         }
                     }
+                    "run_skill" => {
+                        let installed = crate::engine::skills::list_installed_skills();
+                        if !obj.contains_key("skill") {
+                            if let Some(first) = installed.first() {
+                                obj.insert("skill".to_string(), json!(first.name));
+                            }
+                        }
+                        if !obj.contains_key("script") {
+                            obj.insert("script".to_string(), inp);
+                        }
+                        if !obj.contains_key("args") {
+                            obj.insert("args".to_string(), json!([]));
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -381,6 +465,9 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         "start_line",
         "end_line",
         "depth",
+        "skill",
+        "script",
+        "args",
     ];
     let lower_input_for_xml = clean_input.to_lowercase();
     let mut args_map = serde_json::Map::new();
@@ -425,7 +512,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
     }
 
     // 5. Key-Value parameter lines: key=val or key: val (e.g. path=...\ncontent=...)
-    let known_keys_pattern = r#"(?mi)^(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|limit|max_results|input)\s*[:=]\s*(.*)$"#;
+    let known_keys_pattern = r#"(?mi)^(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|limit|max_results|input|skill|script|args)\s*[:=]\s*(.*)$"#;
     if let Ok(kv_re) = Regex::new(known_keys_pattern) {
         let matches: Vec<_> = kv_re.captures_iter(clean_input).collect();
         if !matches.is_empty() {
@@ -495,6 +582,16 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                 if norm_name == "search_files" && !kv_map.contains_key("path") {
                     kv_map.insert("path".to_string(), Value::String(".".to_string()));
                 }
+                if norm_name == "run_skill" {
+                    if let Some(args_val) = kv_map.get_mut("args") {
+                        if let Some(s) = args_val.as_str() {
+                            let parts: Vec<Value> = s.split_whitespace().map(|x| json!(x)).collect();
+                            *args_val = Value::Array(parts);
+                        }
+                    } else if !kv_map.contains_key("args") {
+                        kv_map.insert("args".to_string(), json!([]));
+                    }
+                }
                 return serde_json::to_string(&Value::Object(kv_map))
                     .unwrap_or_else(|_| "{}".to_string());
             }
@@ -527,6 +624,13 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         }
         "execute_python" => {
             fallback_map.insert("code".to_string(), Value::String(clean_input.to_string()));
+        }
+        "run_skill" => {
+            let installed = crate::engine::skills::list_installed_skills();
+            let default_skill = installed.first().map(|s| s.name.clone()).unwrap_or_default();
+            fallback_map.insert("skill".to_string(), Value::String(default_skill));
+            fallback_map.insert("script".to_string(), Value::String(clean_str));
+            fallback_map.insert("args".to_string(), json!([]));
         }
         _ => {
             fallback_map.insert("input".to_string(), Value::String(clean_str));
@@ -647,7 +751,7 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
             let mut args = json!({});
 
             if let Ok(param_re) = Regex::new(
-                r#"(?s)<parameter\s+name=["']?([a-zA-Z0-9_]+)["']?>(.*?)(?:</parameter>|$)"#,
+                r#"(?s)<parameter(?:=|\s+name=["']?)([a-zA-Z0-9_]+)["']?>(.*?)(?:</parameter>|$)"#,
             ) {
                 let mut found_params = false;
                 for pcap in param_re.captures_iter(raw_body) {
@@ -722,26 +826,11 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
         for cap in fn_re.captures_iter(text) {
             let name = cap[1].to_string();
             let mut raw_args = cap[2].trim().to_string();
-            if let Some(pos) = raw_args.find("</parameter>") {
-                raw_args = raw_args[..pos].trim().to_string();
-            }
             if let Some(pos) = raw_args.find("</tool_call>") {
                 raw_args = raw_args[..pos].trim().to_string();
             }
 
-            let args_json = if let Some(v) = relaxed_json_parse(&raw_args) {
-                v.to_string()
-            } else if name == "execute_python" || name == "python" {
-                json!({ "code": raw_args }).to_string()
-            } else if name == "run_command" {
-                json!({ "cmd": raw_args }).to_string()
-            } else if name == "web_search" || name == "arxiv_search" || name == "arxiv" {
-                json!({ "query": raw_args }).to_string()
-            } else if name == "fetch_page" {
-                json!({ "url": raw_args }).to_string()
-            } else {
-                raw_args
-            };
+            let args_json = clean_and_normalize_tool_arguments(&name, &raw_args);
             calls.push(ToolCallInfo {
                 id: uuid::Uuid::new_v4().to_string(),
                 name,
@@ -1020,6 +1109,17 @@ pub async fn fetch_available_models(base_url: &str, api_key: Option<&str>) -> Ve
 }
 
 pub fn build_tool_definitions() -> Vec<Value> {
+    let installed = crate::engine::skills::list_installed_skills();
+    let skill_desc = if installed.is_empty() {
+        "Executes a specialized agent skill script in an isolated environment via 'uv run'.".to_string()
+    } else {
+        let mut desc = "Executes a specialized agent skill script in an isolated environment via 'uv run'. Available skills:\n".to_string();
+        for s in installed {
+            desc.push_str(&format!("- {}: {}\n", s.name, s.description));
+        }
+        desc
+    };
+
     vec![
         json!({
             "type": "function",
@@ -1150,6 +1250,22 @@ pub fn build_tool_definitions() -> Vec<Value> {
                         "path": {"type": "string", "description": "Directory or file path to search in (default: '.')"}
                     },
                     "required": ["pattern"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "run_skill",
+                "description": skill_desc,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skill": {"type": "string", "description": "Target skill directory name from available skills list"},
+                        "script": {"type": "string", "description": "Script path relative to skill root (e.g. 'scripts/run.py')"},
+                        "args": {"type": "array", "items": {"type": "string"}, "description": "Optional CLI arguments"}
+                    },
+                    "required": ["skill", "script"]
                 }
             }
         }),
@@ -1428,11 +1544,14 @@ pub async fn stream_completion(
         };
 
         body["tools"] = Value::Array(tools);
-        body["tool_choice"] = Value::String(if forced_tool.is_some() {
-            "required".to_string()
+        body["tool_choice"] = if let Some(tool_name) = &forced_tool {
+            json!({
+                "type": "function",
+                "function": { "name": tool_name }
+            })
         } else {
-            "auto".to_string()
-        });
+            json!("auto")
+        };
     }
 
     if let Ok(pretty) = serde_json::to_string_pretty(&body) {
@@ -1768,5 +1887,23 @@ mod tests {
             .unwrap()
             .contains("line1: write_file OK"));
         println!("PASSED XML WRITE_FILE! NORM: {}", norm_str);
+    }
+
+    #[test]
+    fn test_parameter_xml_parse() {
+        let raw = "<parameter=skill>\nimage-analyzer\n</parameter>\n<parameter=script>\nscripts/analyze.py\n</parameter>\n<parameter=args>\nphoto.png --out-dir intake\n</parameter>";
+        let norm_str = clean_and_normalize_tool_arguments("run_skill", raw);
+        let parsed: serde_json::Value = serde_json::from_str(&norm_str).unwrap();
+        assert_eq!(
+            parsed.get("skill").and_then(|v| v.as_str()),
+            Some("image-analyzer")
+        );
+        assert_eq!(
+            parsed.get("script").and_then(|v| v.as_str()),
+            Some("scripts/analyze.py")
+        );
+        let args = parsed.get("args").and_then(|v| v.as_array()).unwrap();
+        assert_eq!(args.len(), 3);
+        assert_eq!(args[0].as_str(), Some("photo.png"));
     }
 }
