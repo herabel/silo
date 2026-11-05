@@ -318,6 +318,8 @@ pub struct Session {
     pub context_config: ContextConfig,
     #[serde(default)]
     pub is_deep_research: bool,
+    #[serde(default)]
+    pub routing: crate::engine::router::ConversationRouting,
 }
 
 impl Session {
@@ -332,6 +334,7 @@ impl Session {
             active_model: model.into(),
             context_config: ContextConfig::default(),
             is_deep_research: false,
+            routing: crate::engine::router::ConversationRouting::default(),
         }
     }
 

@@ -147,6 +147,7 @@ pub struct SiloApp {
     pub server_status_msg: Option<String>,
     pub models_tx: UnboundedSender<Vec<ModelInfo>>,
     pub editing_model_inline: bool,
+    pub routing_policy: crate::engine::router::RoutingPolicy,
 }
 
 impl SiloApp {
@@ -296,6 +297,14 @@ impl SiloApp {
         let default_model = config.selected_model.clone();
         let server_url = config.server_url.clone();
 
+        if let Ok(mut reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.write() {
+            reg.register(crate::engine::router::InstanceMetrics::new(
+                "primary",
+                "Primary Endpoint",
+                &server_url,
+            ));
+        }
+
         // Decrypt API key strictly in RAM via active VaultKey (ChaCha20-Poly1305)
         let mut api_key = String::new();
         if let Some(enc_bytes) = &config.encrypted_api_key {
@@ -398,6 +407,7 @@ impl SiloApp {
             new_password_input: String::new(),
             confirm_password_input: String::new(),
             vault_status_msg: None,
+            routing_policy: crate::engine::router::RoutingPolicy::default(),
         }
     }
 
@@ -669,7 +679,7 @@ impl SiloApp {
     }
 
     pub fn start_generation(&mut self) {
-        let sess = match self.active_session() {
+        let mut sess = match self.active_session() {
             Some(s) => s.clone(),
             None => return,
         };
@@ -700,12 +710,64 @@ impl SiloApp {
         } else { !(self.is_deep_active && self.deep_fetch_count >= MAX_DEEP_FETCHES) };
 
         let forced_tool = self.forced_tool.take();
-        let base_url = self.server_url.clone();
-        let api_key = if self.api_key.trim().is_empty() {
-            None
+
+        let approx_context_tokens = sess.messages.iter().map(|m| m.content.len()).sum::<usize>() / 4;
+        let route_action = if let Ok(reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.read() {
+            self.routing_policy.decide_route(&sess.routing, &reg, approx_context_tokens)
         } else {
-            Some(self.api_key.trim().to_string())
+            crate::engine::router::RoutingAction::FallbackDefault { reason: "Registry lock poisoned" }
         };
+
+        let (base_url, api_key) = match route_action {
+            crate::engine::router::RoutingAction::UsePinned { instance_id, reason } => {
+                sess.routing.pinned_instance_id = Some(instance_id.clone());
+                self.process_logs.push(format!("◈ [Router] Affinity: {} ({})", instance_id, reason));
+                if let Ok(reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.read() {
+                    if let Some(inst) = reg.get(&instance_id) {
+                        (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                    } else {
+                        (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                    }
+                } else {
+                    (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                }
+            }
+            crate::engine::router::RoutingAction::EvictAndSwitch { old_instance_id, new_instance_id, reason } => {
+                self.process_logs.push(format!("◈ [Router] SLA Eviction: {} -> {} ({:?})", old_instance_id, new_instance_id, reason));
+                sess.routing.pinned_instance_id = Some(new_instance_id.clone());
+                sess.routing.consecutive_slow_turns = 0;
+                if let Ok(reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.read() {
+                    if let Some(inst) = reg.get(&new_instance_id) {
+                        (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                    } else {
+                        (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                    }
+                } else {
+                    (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                }
+            }
+            crate::engine::router::RoutingAction::InitialSelection { instance_id } => {
+                sess.routing.pinned_instance_id = Some(instance_id.clone());
+                self.process_logs.push(format!("◈ [Router] Instance selection: {}", instance_id));
+                if let Ok(reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.read() {
+                    if let Some(inst) = reg.get(&instance_id) {
+                        (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                    } else {
+                        (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                    }
+                } else {
+                    (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                }
+            }
+            crate::engine::router::RoutingAction::FallbackDefault { reason } => {
+                self.process_logs.push(format!("◈ [Router] Default endpoint ({})", reason));
+                (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+            }
+        };
+
+        if let Some(active) = self.active_session_mut() {
+            active.routing = sess.routing.clone();
+        }
 
         self.tokio_handle.spawn(async move {
             stream_completion(
@@ -774,6 +836,7 @@ impl SiloApp {
             let mut final_thinking = None;
             let mut has_error = None;
             let mut new_tool_calls = Vec::new();
+            let mut pending_telemetry = None;
 
             while let Ok(event) = rx.try_recv() {
                 match event {
@@ -797,6 +860,9 @@ impl SiloApp {
                     StreamUpdate::Payload(p) => {
                         self.last_request_payload = Some(p);
                     }
+                    StreamUpdate::Telemetry { ttft_ms, tps, .. } => {
+                        pending_telemetry = Some((ttft_ms, tps));
+                    }
                     StreamUpdate::Finished {
                         full_content,
                         full_thinking,
@@ -818,6 +884,50 @@ impl SiloApp {
                     StreamUpdate::Error(err) => {
                         has_error = Some(err);
                         finished = true;
+                    }
+                }
+            }
+
+            if let Some((ttft_ms, tps)) = pending_telemetry {
+                let policy = self.routing_policy.clone();
+                if let Some(sess) = self.active_session_mut() {
+                    let pinned = sess
+                        .routing
+                        .pinned_instance_id
+                        .clone()
+                        .unwrap_or_else(|| "primary".to_string());
+                    if let Ok(mut reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.write() {
+                        policy.update_after_turn(
+                            &mut sess.routing,
+                            &mut reg,
+                            &pinned,
+                            ttft_ms as f64,
+                            tps,
+                            false,
+                            Some(200),
+                        );
+                    }
+                }
+            }
+
+            if has_error.is_some() {
+                let policy = self.routing_policy.clone();
+                if let Some(sess) = self.active_session_mut() {
+                    let pinned = sess
+                        .routing
+                        .pinned_instance_id
+                        .clone()
+                        .unwrap_or_else(|| "primary".to_string());
+                    if let Ok(mut reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.write() {
+                        policy.update_after_turn(
+                            &mut sess.routing,
+                            &mut reg,
+                            &pinned,
+                            0.0,
+                            0.0,
+                            true,
+                            None,
+                        );
                     }
                 }
             }
@@ -1664,6 +1774,44 @@ impl eframe::App for SiloApp {
                         );
                         if host_btn.clicked() {
                             self.show_server_modal = !self.show_server_modal;
+                        }
+
+                        ui.add_space(8.0);
+
+                        // Instance Affinity & Routing Telemetry Badge
+                        if let Some(sess) = self.active_session() {
+                            let pinned_label = sess.routing.pinned_instance_id.as_deref().unwrap_or("auto");
+                            let last_speed = match (sess.routing.last_tps, sess.routing.last_ttft_ms) {
+                                (Some(tps), Some(ttft)) => format!("◈ {} ({:.1} t/s, {}ms)", pinned_label, tps, ttft),
+                                (Some(tps), None) => format!("◈ {} ({:.1} t/s)", pinned_label, tps),
+                                _ => format!("◈ affinity: {}", pinned_label),
+                            };
+
+                            let route_btn = ui.add(
+                                egui::Button::new(
+                                    RichText::new(last_speed)
+                                        .color(if sess.routing.consecutive_slow_turns > 0 {
+                                            Color32::from_rgb(251, 146, 60)
+                                        } else {
+                                            Color32::from_rgb(96, 165, 250)
+                                        })
+                                        .monospace()
+                                        .size(11.0),
+                                )
+                                .fill(Color32::from_rgb(17, 21, 30))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(30, 37, 52)))
+                                .rounding(Rounding::same(4.0)),
+                            ).on_hover_text("Sticky Instance Routing: Click to clear affinity and re-route to fastest endpoint");
+
+                            if route_btn.clicked() {
+                                if let Some(s) = self.active_session_mut() {
+                                    s.routing.pinned_instance_id = None;
+                                    s.routing.consecutive_slow_turns = 0;
+                                    s.routing.manual_override = false;
+                                }
+                                self.save_active_session();
+                                self.process_logs.push("◈ [Router] Session affinity reset by user. Next turn will re-probe fastest instance.".to_string());
+                            }
                         }
 
                         ui.add_space(8.0);

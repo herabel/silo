@@ -29,6 +29,13 @@ pub enum StreamUpdate {
     ToolDrafting(String),
     Log(String),
     Payload(String),
+    #[allow(dead_code)]
+    Telemetry {
+        ttft_ms: u64,
+        tps: f64,
+        prompt_tokens: Option<u64>,
+        completion_tokens: Option<u64>,
+    },
     Finished {
         full_content: String,
         full_thinking: Option<String>,
@@ -1700,6 +1707,7 @@ pub async fn stream_completion(
     let mut last_finish_reason: Option<String> = None;
     let mut usage_info: Option<(u64, u64, u64)> = None;
     let mut chunk_count = 0usize;
+    let mut first_token_time: Option<u64> = None;
 
     while let Some(item) = byte_stream.next().await {
         if cancel_token.is_cancelled() {
@@ -1769,6 +1777,9 @@ pub async fn stream_completion(
                             delta.get("reasoning_content").and_then(|r| r.as_str())
                         {
                             if !reasoning.is_empty() {
+                                if first_token_time.is_none() {
+                                    first_token_time = Some(start_time.elapsed().as_millis() as u64);
+                                }
                                 chunk_count += 1;
                                 stream_parser.accumulated_thinking.push_str(reasoning);
                                 let _ = tx.send(StreamUpdate::Thinking(reasoning.to_string()));
@@ -1779,6 +1790,9 @@ pub async fn stream_completion(
                         if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array())
                         {
                             for tc in tool_calls {
+                                if first_token_time.is_none() {
+                                    first_token_time = Some(start_time.elapsed().as_millis() as u64);
+                                }
                                 chunk_count += 1;
                                 let idx =
                                     tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
@@ -1805,6 +1819,9 @@ pub async fn stream_completion(
                         // 3. Content tokens processed through stream_parser (filters out <think> and tool tags from screen!)
                         if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                             if !content.is_empty() {
+                                if first_token_time.is_none() {
+                                    first_token_time = Some(start_time.elapsed().as_millis() as u64);
+                                }
                                 chunk_count += 1;
                                 raw_full_output.push_str(content);
                                 let parsed_events = stream_parser.push_chunk(content);
@@ -1838,6 +1855,14 @@ pub async fn stream_completion(
     };
 
     let finish_str = last_finish_reason.as_deref().unwrap_or("unknown");
+    let effective_ttft = first_token_time.unwrap_or(ttft_ms as u64);
+    let _ = tx.send(StreamUpdate::Telemetry {
+        ttft_ms: effective_ttft,
+        tps,
+        prompt_tokens: usage_info.map(|(p, _, _)| p),
+        completion_tokens: usage_info.map(|(_, c, _)| c),
+    });
+
     if let Some((pt, ct, tt)) = usage_info {
         let _ = tx.send(StreamUpdate::Log(format!(
             "🏁 [Stream Done] finish: \"{}\" | prompt: {} tok | completion: {} tok | total: {} tok | {}ms ({:.1} t/s)",

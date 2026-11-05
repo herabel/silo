@@ -405,6 +405,7 @@ pub async fn run_agent_session(
                 }
                 StreamUpdate::ToolDrafting(_) => {}
                 StreamUpdate::Payload(_) => {}
+                StreamUpdate::Telemetry { .. } => {}
                 StreamUpdate::Log(l) => {
                     if verbose {
                         eprintln!("[LOG] {}", l);
