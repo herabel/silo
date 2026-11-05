@@ -33,19 +33,25 @@ Silo features a native, iterative deep research loop:
 * **Shell Diagnostics:** Controlled shell command execution for host environment inspection and build diagnosis.
 * **Filesystem & Code Workspace:** Precise tools (`read_file`, `write_file`, `edit_file`, `search_files`) with exact line-range slicing for safe, low-context agentic code navigation.
 
-### 4. Context & Environment Governor
+### 4. Agent Skills & In-RAM Memory Bridge
+* **Dynamic Skill Discovery:** Drop any directory conforming to the Agent Skills specification (`SKILL.md`) into `skills/`. Silo discovers manifests dynamically and exposes tools to the model via isolated `uv run` subruntimes.
+* **Zero-Leak In-RAM Bridge:** When external CLI tools (Python, OpenCV, Playwright) require filesystem paths for decrypted vault attachments, Silo allocates volatile buffers backed by Win32 `FILE_ATTRIBUTE_TEMPORARY` or Linux `/dev/shm`. Pages are kept in physical RAM and bypass persistent disk storage.
+* **RAII Zeroization:** Temporary buffers are cryptographically overwritten with zeroes on `Drop` before file unlinking.
+* **Automatic Artifact Ingestion:** Generated report files (e.g. `-> <artifact>.md`) are automatically detected, read, and appended directly to the tool response.
+
+### 5. Context & Environment Governor
 Prevent LLMs from hallucinating temporal markers or inferring sensitive host metadata:
 * **System Prompt Control:** Disable or override system instructions per session.
 * **Temporal Anchor:** Freeze or spoof date/time exposed to the model.
 * **Host Masking:** Spoof OS, architecture, current directory, or user paths to keep proprietary project structures confidential.
 
-### 5. Multi-Host & Engine Agnostic
+### 6. Multi-Host & Engine Agnostic
 Silo is decoupled from any single runtime. Connect to any local or remote OpenAI-compatible host with a single click:
 * **Local Engines:** Native presets for **LM Studio** (`:1234`), **llama.cpp server** (`:8080`), **Ollama** (`:11434`), and **vLLM** (`:8000`).
 * **Cloud & Remote Endpoints:** Full support for custom hosts (e.g. OpenRouter, DeepSeek, Groq) with optional Bearer token authorization.
 * **Dynamic Model Switching:** Automatically discovers loaded models and available checkpoints across hosts.
 
-### 6. Native Performance
+### 7. Native Performance
 * **Pure Rust:** Zero JavaScript, zero WebKit, zero Electron.
 * **Async Concurrency:** Non-blocking streaming pipeline via `tokio` mpsc channels and cancellation tokens.
 * **Visuals:** Dark, modern design inspired by Linear and Raycast, featuring custom typography (Inter font stack) and syntax-highlighted code blocks with one-click copy.
@@ -65,6 +71,8 @@ flowchart TD
  subgraph Core ["Silo Engine (Rust / Tokio)"]
  StreamParser["SSE Stream Parser & Normalizer"]
  ToolExecutor["Autonomous Tool Loop"]
+ SkillsRuntime["Agent Skills Runtime (uv)"]
+ EphemeralBridge["In-RAM Ephemeral Bridge"]
  ContextGov["Context Governor & Masking"]
  end
 
@@ -81,6 +89,7 @@ flowchart TD
  UI <--> Core
  Core <--> Inference
  Core <--> Vault
+ SkillsRuntime <--> EphemeralBridge
  Entropy --> AEAD
  AEAD --> Files
 ```
@@ -103,6 +112,14 @@ cd silo
 # Run optimized release build
 cargo run --release
 ```
+
+### Interactive Quick Commands
+
+Within the chat interface, trigger specialized agentic execution loops via prefix commands:
+* `/skill <name> [args]` - Execute an installed agent skill in an isolated subruntime.
+* `/deep [topic]` - Launch an iterative multi-turn research investigation.
+* `/calc [code]` - Run deterministic Python calculations and proofs in the sandbox.
+* `/run [command]` - Execute host shell diagnostics and compiler commands.
 
 ### Headless CLI Diagnostics
 
