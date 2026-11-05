@@ -2828,16 +2828,33 @@ impl eframe::App for SiloApp {
                                                         // Unified Process Accordion (Antigravity-style)
                                                         if !process_steps.is_empty() {
                                                             let step_count = process_steps.len();
-                                                            let running_tool = process_steps.iter().find_map(|s| match s.step_kind {
-                                                                TurnStepKind::ToolCall(tc) if tc.status == ToolStatus::Running => {
-                                                                    let (action, detail) = summarize_tool_call(tc);
-                                                                    Some(format!("{} {}", action, detail))
-                                                                }
-                                                                _ => None,
-                                                            });
+                                                            let running_tools: Vec<String> = process_steps
+                                                                .iter()
+                                                                .filter_map(|s| match s.step_kind {
+                                                                    TurnStepKind::ToolCall(tc)
+                                                                        if tc.status == ToolStatus::Running =>
+                                                                    {
+                                                                        let (action, detail) = summarize_tool_call(tc);
+                                                                        Some(format!("{} {}", action, detail))
+                                                                    }
+                                                                    _ => None,
+                                                                })
+                                                                .collect();
 
-                                                            let (hdr_title, hdr_color) = if let Some(current) = running_tool {
-                                                                (format!("◈ Running: {} (step {})...", current, step_count), Color32::from_rgb(245, 158, 11))
+                                                            let (hdr_title, hdr_color) = if running_tools.len() > 1 {
+                                                                (
+                                                                    format!(
+                                                                        "◈ Running {} tools in parallel (step {})...",
+                                                                        running_tools.len(),
+                                                                        step_count
+                                                                    ),
+                                                                    Color32::from_rgb(245, 158, 11),
+                                                                )
+                                                            } else if let Some(current) = running_tools.first() {
+                                                                (
+                                                                    format!("◈ Running: {} (step {})...", current, step_count),
+                                                                    Color32::from_rgb(245, 158, 11),
+                                                                )
                                                             } else if *is_last_in_session && self.is_generating {
                                                                 (format!("◈ Working ({} steps)...", step_count), Color32::from_rgb(56, 189, 248))
                                                             } else {
