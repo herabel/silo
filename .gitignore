@@ -8,3 +8,10 @@ sessions/
 master.key
 web_scout.exe
 web_scout
+skills/
+user_skills/
+*.png
+*.jpg
+*.jpeg
+*.webp
+
