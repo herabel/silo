@@ -21,6 +21,18 @@ pub struct AppConfig {
     pub selected_model: String,
     pub encrypted_api_key: Option<Vec<u8>>,
     pub last_session_id: Option<String>,
+    #[serde(default = "default_app_context_window")]
+    pub default_context_window_tokens: usize,
+    #[serde(default = "default_app_max_output")]
+    pub default_max_output_tokens: usize,
+}
+
+fn default_app_context_window() -> usize {
+    32768
+}
+
+fn default_app_max_output() -> usize {
+    8192
 }
 
 impl Default for AppConfig {
@@ -30,6 +42,8 @@ impl Default for AppConfig {
             selected_model: "glm-4.7-flash".to_string(),
             encrypted_api_key: None,
             last_session_id: None,
+            default_context_window_tokens: 32768,
+            default_max_output_tokens: 8192,
         }
     }
 }
@@ -148,6 +162,8 @@ pub struct SiloApp {
     pub models_tx: UnboundedSender<Vec<ModelInfo>>,
     pub editing_model_inline: bool,
     pub routing_policy: crate::engine::router::RoutingPolicy,
+    pub default_context_window_tokens: usize,
+    pub default_max_output_tokens: usize,
 }
 
 impl SiloApp {
@@ -408,6 +424,8 @@ impl SiloApp {
             confirm_password_input: String::new(),
             vault_status_msg: None,
             routing_policy: crate::engine::router::RoutingPolicy::default(),
+            default_context_window_tokens: config.default_context_window_tokens,
+            default_max_output_tokens: config.default_max_output_tokens,
         }
     }
 
@@ -447,12 +465,16 @@ impl SiloApp {
             selected_model: self.selected_model.clone(),
             encrypted_api_key: encrypted_key,
             last_session_id: self.active_session_id.clone(),
+            default_context_window_tokens: self.default_context_window_tokens,
+            default_max_output_tokens: self.default_max_output_tokens,
         };
         cfg.save();
     }
 
     pub fn new_chat(&mut self) {
-        let new_sess = Session::new(&self.selected_model);
+        let mut new_sess = Session::new(&self.selected_model);
+        new_sess.context_config.context_window_tokens = self.default_context_window_tokens;
+        new_sess.context_config.max_output_tokens = self.default_max_output_tokens;
         let id = new_sess.id.clone();
         let _ = self.session_manager.save_session(&new_sess);
         self.sessions.insert(0, new_sess);
@@ -769,6 +791,9 @@ impl SiloApp {
             active.routing = sess.routing.clone();
         }
 
+        let context_window = sess.context_config.context_window_tokens;
+        let max_output = sess.context_config.max_output_tokens;
+
         self.tokio_handle.spawn(async move {
             stream_completion(
                 &base_url,
@@ -778,6 +803,8 @@ impl SiloApp {
                 &messages,
                 enable_tools,
                 forced_tool,
+                context_window,
+                max_output,
                 tx,
                 cancel_token,
             )
@@ -3360,7 +3387,81 @@ impl eframe::App for SiloApp {
 
                             ui.add_space(8.0);
 
-                            // 6. Live Inspector
+                            // 6. Context Window & Generation Limits
+                            Frame::none()
+                                .fill(Color32::from_rgb(16, 20, 28))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(Margin::same(10.0))
+                                .show(ui, |ui| {
+                                    ui.label(RichText::new("Context Window & Max Tokens").color(Color32::from_rgb(56, 189, 248)).strong().size(12.0));
+                                    ui.label(
+                                        RichText::new("Max tokens retained in dialogue history and generation limit per turn.")
+                                            .color(Color32::from_rgb(148, 163, 184))
+                                            .size(11.5),
+                                    );
+                                    ui.add_space(6.0);
+
+                                    // Context presets
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label(RichText::new("Presets:").size(11.5));
+                                        if ui.button("8k").clicked() {
+                                            sess.context_config.context_window_tokens = 8192;
+                                            sess.context_config.max_output_tokens = 2048;
+                                            save_needed = true;
+                                        }
+                                        if ui.button("16k").clicked() {
+                                            sess.context_config.context_window_tokens = 16384;
+                                            sess.context_config.max_output_tokens = 4096;
+                                            save_needed = true;
+                                        }
+                                        if ui.button("32k").clicked() {
+                                            sess.context_config.context_window_tokens = 32768;
+                                            sess.context_config.max_output_tokens = 8192;
+                                            save_needed = true;
+                                        }
+                                        if ui.button("64k").clicked() {
+                                            sess.context_config.context_window_tokens = 65536;
+                                            sess.context_config.max_output_tokens = 12288;
+                                            save_needed = true;
+                                        }
+                                        if ui.button("128k").clicked() {
+                                            sess.context_config.context_window_tokens = 131072;
+                                            sess.context_config.max_output_tokens = 16384;
+                                            save_needed = true;
+                                        }
+                                        if ui.button("1M").clicked() {
+                                            sess.context_config.context_window_tokens = 1048576;
+                                            sess.context_config.max_output_tokens = 32768;
+                                            save_needed = true;
+                                        }
+                                    });
+
+                                    ui.add_space(8.0);
+
+                                    // Custom values
+                                    ui.horizontal(|ui| {
+                                        ui.label("Context Window (tokens):");
+                                        let mut ctx_val = sess.context_config.context_window_tokens as i64;
+                                        if ui.add(egui::DragValue::new(&mut ctx_val).range(2048..=2097152).speed(1024)).changed() {
+                                            sess.context_config.context_window_tokens = ctx_val.max(2048) as usize;
+                                            save_needed = true;
+                                        }
+
+                                        ui.add_space(16.0);
+
+                                        ui.label("Max Output (tokens):");
+                                        let mut out_val = sess.context_config.max_output_tokens as i64;
+                                        if ui.add(egui::DragValue::new(&mut out_val).range(512..=65536).speed(512)).changed() {
+                                            sess.context_config.max_output_tokens = out_val.max(512) as usize;
+                                            save_needed = true;
+                                        }
+                                    });
+                                });
+
+                            ui.add_space(8.0);
+
+                            // 7. Live Inspector
                             let preview_prompt = build_configured_system_prompt(&sess.context_config);
                             egui::CollapsingHeader::new(
                                 RichText::new(format!("Live Inspector: Exact Context Sent to LLM ({} chars)", preview_prompt.len()))

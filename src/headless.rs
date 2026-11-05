@@ -375,6 +375,8 @@ pub async fn run_agent_session(
                 &msgs_clone,
                 enable_tools,
                 forced_tool,
+                32768,
+                8192,
                 tx,
                 cancel_token,
             )

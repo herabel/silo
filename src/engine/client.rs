@@ -1328,6 +1328,8 @@ pub async fn stream_completion(
     messages: &[ChatMessage],
     enable_tools: bool,
     forced_tool: Option<String>,
+    context_window_tokens: usize,
+    max_output_tokens: usize,
     tx: UnboundedSender<StreamUpdate>,
     cancel_token: CancellationToken,
 ) {
@@ -1508,10 +1510,11 @@ pub async fn stream_completion(
         }
         normalized_messages.push(msg);
     }
-    // Context Governor: protect against hitting llama.cpp / LM Studio hard context ceiling (n_ctx ~6582)
-    // Budget max ~12,000 characters backwards so prompt_tokens stays around ~4,000,
-    // leaving 2,500+ tokens of KV cache completely free for generation!
-    const BUDGET_CHARS: usize = 75000; // Scaled for loaded 32,768 context length
+    // Context Governor: dynamically scale backwards character budget based on configured context window
+    // Budget backwards: max prompt tokens = (context_window - max_output_tokens).max(1024)
+    // Approx 3.2 chars per token (conservative for Cyrillic and code)
+    let max_prompt_tokens = context_window_tokens.saturating_sub(max_output_tokens).max(1024);
+    let budget_chars = max_prompt_tokens.saturating_mul(3).max(4096);
     let mut governed_messages: Vec<Value> = Vec::new();
     let mut curr_chars = 0usize;
 
@@ -1527,7 +1530,7 @@ pub async fn stream_completion(
             0
         };
 
-        if curr_chars + c_len > BUDGET_CHARS && governed_messages.len() >= 3 {
+        if curr_chars + c_len > budget_chars && governed_messages.len() >= 3 {
             break;
         }
         curr_chars += c_len;
@@ -1554,7 +1557,7 @@ pub async fn stream_completion(
         if last.get("role").and_then(|r| r.as_str()) == Some("tool") {
             governed_messages.push(json!({
                 "role": "user",
-                "content": "[DIRECTIVE]: Tool execution completed. Review the gathered data above, synthesize the facts, and formulate your comprehensive answer now."
+                "content": "[DIRECTIVE]: Tool execution completed and all required data has been gathered. Conclude your thinking and write your comprehensive, definitive final markdown dossier now. Do NOT call any more tools and do NOT output conversational filler."
             }));
         }
     }
@@ -1566,7 +1569,7 @@ pub async fn stream_completion(
         "messages": payload_messages,
         "temperature": 0.3,
         "top_p": 0.9,
-        "max_tokens": 16384,
+        "max_tokens": max_output_tokens.max(256),
         "stream": true,
     });
 
