@@ -1772,10 +1772,13 @@ pub async fn stream_completion(
                         .and_then(|c| c.get(0))
                         .and_then(|c| c.get("delta"))
                     {
-                        // 1. Direct reasoning_content field
-                        if let Some(reasoning) =
-                            delta.get("reasoning_content").and_then(|r| r.as_str())
-                        {
+                        // 1. Direct reasoning / reasoning_content field (OpenAI, DeepSeek, Z.ai, Aitunnel, OpenRouter)
+                        let reasoning_opt = delta
+                            .get("reasoning_content")
+                            .or_else(|| delta.get("reasoning"))
+                            .and_then(|r| r.as_str());
+
+                        if let Some(reasoning) = reasoning_opt {
                             if !reasoning.is_empty() {
                                 if first_token_time.is_none() {
                                     first_token_time = Some(start_time.elapsed().as_millis() as u64);
@@ -1848,8 +1851,13 @@ pub async fn stream_completion(
 
     let elapsed = start_time.elapsed();
     let elapsed_ms = elapsed.as_millis();
-    let tps = if elapsed.as_secs_f64() > 0.05 && chunk_count > 0 {
-        chunk_count as f64 / elapsed.as_secs_f64()
+    let total_tokens_emitted = usage_info
+        .map(|(_, ct, _)| ct)
+        .filter(|&ct| ct > 0)
+        .unwrap_or(chunk_count as u64);
+
+    let tps = if elapsed.as_secs_f64() > 0.05 && total_tokens_emitted > 0 {
+        total_tokens_emitted as f64 / elapsed.as_secs_f64()
     } else {
         0.0
     };
@@ -1971,5 +1979,19 @@ mod tests {
         let args = parsed.get("args").and_then(|v| v.as_array()).unwrap();
         assert_eq!(args.len(), 3);
         assert_eq!(args[0].as_str(), Some("photo.png"));
+    }
+
+    #[test]
+    fn test_reasoning_and_reasoning_content_delta_parsing() {
+        let chunk1: Value = serde_json::from_str(r#"{"choices":[{"index":0,"delta":{"reasoning":"Analyzing memory bus..."}}]}"#).unwrap();
+        let chunk2: Value = serde_json::from_str(r#"{"choices":[{"index":0,"delta":{"reasoning_content":"Checking NIST SP 800-90B..."}}]}"#).unwrap();
+
+        let delta1 = chunk1.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).unwrap();
+        let r1 = delta1.get("reasoning_content").or_else(|| delta1.get("reasoning")).and_then(|r| r.as_str());
+        assert_eq!(r1, Some("Analyzing memory bus..."));
+
+        let delta2 = chunk2.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).unwrap();
+        let r2 = delta2.get("reasoning_content").or_else(|| delta2.get("reasoning")).and_then(|r| r.as_str());
+        assert_eq!(r2, Some("Checking NIST SP 800-90B..."));
     }
 }
