@@ -63,6 +63,10 @@ pub fn find_uv_bin() -> PathBuf {
 
         if let Ok(user_profile) = std::env::var("USERPROFILE") {
             let base = PathBuf::from(user_profile);
+            let candidate_local = base.join(r".local\bin\uv.exe");
+            if candidate_local.is_file() {
+                return candidate_local;
+            }
             let candidate = base.join(r".cargo\bin\uv.exe");
             if candidate.is_file() {
                 return candidate;

@@ -221,6 +221,45 @@ pub fn strip_residual_tags(s: &str) -> String {
     cleaned
 }
 
+pub fn parse_cli_tokens(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for ch in input.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '\'' && !in_double {
+            in_single = !in_single;
+            continue;
+        }
+        if ch == '"' && !in_single {
+            in_double = !in_double;
+            continue;
+        }
+        if ch.is_whitespace() && !in_single && !in_double {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> String {
     let raw_trimmed = raw_args.trim();
     if raw_trimmed.is_empty() {
@@ -274,7 +313,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                         clean_val = strip_residual_tags(&clean_val);
                     }
                     if key == "args" {
-                        let items: Vec<Value> = clean_val.split_whitespace().map(|x| json!(x)).collect();
+                        let items: Vec<Value> = parse_cli_tokens(&clean_val).into_iter().map(Value::String).collect();
                         param_map.insert(key, Value::Array(items));
                     } else if key == "start_line" || key == "end_line" || key == "depth" {
                         if let Ok(num) = clean_val.parse::<i64>() {
@@ -511,22 +550,21 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
             .unwrap_or_else(|_| "{}".to_string());
     }
 
-    // 5. Key-Value parameter lines: key=val or key: val (e.g. path=...\ncontent=...)
-    let known_keys_pattern = r#"(?mi)^(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|limit|max_results|input|skill|script|args)\s*[:=]\s*(.*)$"#;
+    // 5. Key-Value parameter lines: key=val or key: val (e.g. path=...\ncontent=... or skill="ast-grep" script="" args="...")
+    let known_keys_pattern = r#"(?i)(?:^|[\r\n\s])(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|limit|max_results|input|skill|script|args)\s*[:=]\s*"#;
     if let Ok(kv_re) = Regex::new(known_keys_pattern) {
         let matches: Vec<_> = kv_re.captures_iter(clean_input).collect();
         if !matches.is_empty() {
             let mut kv_map = serde_json::Map::new();
             for (i, cap) in matches.iter().enumerate() {
                 let key = cap[1].to_lowercase();
-                let val_match = cap.get(2).unwrap();
-                let start_idx = val_match.start();
+                let val_start = cap.get(0).unwrap().end();
                 let end_idx = if i + 1 < matches.len() {
                     matches[i + 1].get(0).unwrap().start()
                 } else {
                     clean_input.len()
                 };
-                let raw_val = clean_input[start_idx..end_idx].trim();
+                let raw_val = clean_input[val_start..end_idx].trim();
                 let mut clean_val = raw_val.to_string();
                 if ((clean_val.starts_with('"') && clean_val.ends_with('"'))
                     || (clean_val.starts_with('\'') && clean_val.ends_with('\'')))
@@ -546,6 +584,11 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                         kv_map.insert(key, json!(num));
                         continue;
                     }
+                }
+                if key == "args" {
+                    let tokens = parse_cli_tokens(&clean_val);
+                    kv_map.insert(key, Value::Array(tokens.into_iter().map(Value::String).collect()));
+                    continue;
                 }
                 kv_map.insert(key, Value::String(clean_val));
             }
@@ -583,13 +626,11 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                     kv_map.insert("path".to_string(), Value::String(".".to_string()));
                 }
                 if norm_name == "run_skill" {
-                    if let Some(args_val) = kv_map.get_mut("args") {
-                        if let Some(s) = args_val.as_str() {
-                            let parts: Vec<Value> = s.split_whitespace().map(|x| json!(x)).collect();
-                            *args_val = Value::Array(parts);
-                        }
-                    } else if !kv_map.contains_key("args") {
+                    if !kv_map.contains_key("args") {
                         kv_map.insert("args".to_string(), json!([]));
+                    }
+                    if !kv_map.contains_key("script") {
+                        kv_map.insert("script".to_string(), Value::String(String::new()));
                     }
                 }
                 return serde_json::to_string(&Value::Object(kv_map))

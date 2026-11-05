@@ -1911,7 +1911,7 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
                     .filter_map(|x| x.as_str().map(|s| s.to_string()))
                     .collect()
             } else if let Some(s) = val.get("args").and_then(|v| v.as_str()) {
-                s.split_whitespace().map(|x| x.to_string()).collect()
+                crate::engine::client::parse_cli_tokens(s)
             } else {
                 Vec::new()
             };
