@@ -1,4 +1,6 @@
-use crate::engine::{execute_tool, fetch_available_models, stream_completion, StreamUpdate};
+use crate::engine::{
+    execute_tool, fetch_available_models, is_read_only_tool, stream_completion, StreamUpdate,
+};
 use crate::runtime_env::{build_configured_system_prompt, build_system_prompt, mask_output_data};
 use crate::session::{ChatMessage, ContextConfig, ToolCallRecord, ToolStatus};
 use tokio::sync::mpsc::unbounded_channel;
@@ -84,6 +86,43 @@ pub async fn run_headless(args: Vec<String>) {
         run_agent_session(&user_query, is_deep, model_arg.as_deref(), verbose).await;
     } else {
         print_help();
+    }
+}
+
+fn format_headless_tool_instruction(
+    tool_name: &str,
+    out: &str,
+    is_deep: bool,
+    fetch_count: &mut usize,
+    max_fetches: usize,
+) -> String {
+    if tool_name == "arxiv_search" || tool_name == "arxiv" {
+        if is_deep && *fetch_count < max_fetches {
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.", out, max_fetches - *fetch_count)
+        } else {
+            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.", out)
+        }
+    } else if tool_name == "web_search" || tool_name == "search" {
+        if is_deep && *fetch_count < max_fetches {
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", out, max_fetches - *fetch_count)
+        } else {
+            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.", out)
+        }
+    } else if tool_name == "fetch_page" || tool_name == "fetch" {
+        *fetch_count += 1;
+        if is_deep && *fetch_count < max_fetches {
+            format!("Page Markdown:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Source read [{}/{}]. If additional pages or searches are needed to complete the research, proceed. If sufficient evidence has been gathered, produce the final comprehensive dossier.", out, *fetch_count, max_fetches)
+        } else {
+            format!("Page Markdown:\n{}\n\n[INSTRUCTION]: Now synthesize your final comprehensive dossier.", out)
+        }
+    } else if tool_name == "execute_python" || tool_name == "python" {
+        if is_deep {
+            format!("Python Execution Result:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Computation complete. Incorporate these exact numbers into your analysis. If additional searches or pages are needed, proceed; otherwise, synthesize your comprehensive dossier.", out)
+        } else {
+            format!("Python Execution Result:\n{}\n\n[INSTRUCTION]: Use this exact numerical result to formulate your final response to the user.", out)
+        }
+    } else {
+        format!("Command Execution Result:\n{}\n\n[INSTRUCTION]: Inspect stdout/stderr. Proceed with the task.", out)
     }
 }
 
@@ -529,53 +568,70 @@ pub async fn run_agent_session(
         assistant_msg.tool_calls = assistant_records.clone();
         messages.push(assistant_msg);
 
-        // Execute each tool call
-        for tc in &tool_calls {
-            println!("\nExecuting tool [{}]...", tc.name);
-            let (ok, out) = execute_tool(&tc.name, &tc.arguments).await;
-            println!(
-                "Tool [{}] -> {}: ({} chars output)",
-                tc.name,
-                if ok { "SUCCESS" } else { "FAILED" },
-                out.len()
-            );
-
-            let instruction = if tc.name == "arxiv_search" || tc.name == "arxiv" {
-                if is_deep && fetch_count < max_fetches {
-                    format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.", out, max_fetches - fetch_count)
-                } else {
-                    format!(
-                        "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
-                        out
-                    )
-                }
-            } else if tc.name == "web_search" || tc.name == "search" {
-                if is_deep && fetch_count < max_fetches {
-                    format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", out, max_fetches - fetch_count)
-                } else {
-                    format!(
-                        "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
-                        out
-                    )
-                }
-            } else if tc.name == "fetch_page" || tc.name == "fetch" {
-                fetch_count += 1;
-                if is_deep && fetch_count < max_fetches {
-                    format!("Page Markdown:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Source read [{}/{}]. If additional pages or searches are needed to complete the research, proceed. If sufficient evidence has been gathered, produce the final comprehensive dossier.", out, fetch_count, max_fetches)
-                } else {
-                    format!("Page Markdown:\n{}\n\n[INSTRUCTION]: Now synthesize your final comprehensive dossier.", out)
-                }
-            } else if tc.name == "execute_python" || tc.name == "python" {
-                if is_deep {
-                    format!("Python Execution Result:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Computation complete. Incorporate these exact numbers into your analysis. If additional searches or pages are needed, proceed; otherwise, synthesize your comprehensive dossier.", out)
-                } else {
-                    format!("Python Execution Result:\n{}\n\n[INSTRUCTION]: Use this exact numerical result to formulate your final response to the user.", out)
+        // Execute tool calls (parallelizing contiguous read-only calls)
+        let mut idx = 0;
+        while idx < tool_calls.len() {
+            let is_ro = is_read_only_tool(&tool_calls[idx].name);
+            let mut batch = Vec::new();
+            if is_ro {
+                while idx < tool_calls.len() && is_read_only_tool(&tool_calls[idx].name) {
+                    batch.push(&tool_calls[idx]);
+                    idx += 1;
                 }
             } else {
-                format!("Command Execution Result:\n{}\n\n[INSTRUCTION]: Inspect stdout/stderr. Proceed with the task.", out)
-            };
+                batch.push(&tool_calls[idx]);
+                idx += 1;
+            }
 
-            messages.push(ChatMessage::tool(instruction, &tc.id));
+            if batch.len() > 1 {
+                println!("\nExecuting {} tools in parallel...", batch.len());
+                let mut handles = Vec::new();
+                for tc in &batch {
+                    let name = tc.name.clone();
+                    let args = tc.arguments.clone();
+                    let id = tc.id.clone();
+                    handles.push(tokio::spawn(async move {
+                        let (ok, out) = execute_tool(&name, &args).await;
+                        (id, name, ok, out)
+                    }));
+                }
+                for handle in handles {
+                    if let Ok((id, name, ok, out)) = handle.await {
+                        println!(
+                            "Tool [{}] -> {}: ({} chars output)",
+                            name,
+                            if ok { "SUCCESS" } else { "FAILED" },
+                            out.len()
+                        );
+                        let instruction = format_headless_tool_instruction(
+                            &name,
+                            &out,
+                            is_deep,
+                            &mut fetch_count,
+                            max_fetches,
+                        );
+                        messages.push(ChatMessage::tool(instruction, &id));
+                    }
+                }
+            } else {
+                let tc = batch[0];
+                println!("\nExecuting tool [{}]...", tc.name);
+                let (ok, out) = execute_tool(&tc.name, &tc.arguments).await;
+                println!(
+                    "Tool [{}] -> {}: ({} chars output)",
+                    tc.name,
+                    if ok { "SUCCESS" } else { "FAILED" },
+                    out.len()
+                );
+                let instruction = format_headless_tool_instruction(
+                    &tc.name,
+                    &out,
+                    is_deep,
+                    &mut fetch_count,
+                    max_fetches,
+                );
+                messages.push(ChatMessage::tool(instruction, &tc.id));
+            }
         }
     }
 }

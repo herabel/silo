@@ -1667,6 +1667,38 @@ pub async fn run_search_files(pattern: &str, path_str: &str) -> (bool, String) {
     }
 }
 
+/// Returns true if the tool does not mutate files or execute arbitrary shell scripts.
+/// Read-only tools can safely be executed in parallel.
+pub fn is_read_only_tool(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    matches!(
+        lower.as_str(),
+        "arxiv_search"
+            | "arxiv"
+            | "search_arxiv"
+            | "web_search"
+            | "search"
+            | "duckduckgo_search"
+            | "google_search"
+            | "fetch_page"
+            | "fetch"
+            | "read_url"
+            | "web_fetch"
+            | "read_file"
+            | "read"
+            | "list_dir"
+            | "ls"
+            | "dir"
+            | "search_files"
+            | "grep"
+            | "search_code"
+            | "execute_python"
+            | "python"
+            | "calc"
+            | "eval"
+    )
+}
+
 pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
     let lower_name = name.to_lowercase();
     let norm_args = crate::engine::clean_and_normalize_tool_arguments(&lower_name, raw_args);
@@ -1990,6 +2022,21 @@ mod tests {
         assert!(ok, "arXiv search failed: {}", res);
         assert!(!res.contains("Face Mask"), "Should not match Face Mask");
         assert!(res.contains("Chunk") || res.contains("boundary") || res.contains("content-defined"));
+    }
+
+    #[test]
+    fn test_is_read_only_tool() {
+        assert!(is_read_only_tool("arxiv_search"));
+        assert!(is_read_only_tool("web_search"));
+        assert!(is_read_only_tool("fetch_page"));
+        assert!(is_read_only_tool("read_file"));
+        assert!(is_read_only_tool("list_dir"));
+        assert!(is_read_only_tool("search_files"));
+        assert!(is_read_only_tool("execute_python"));
+
+        assert!(!is_read_only_tool("write_file"));
+        assert!(!is_read_only_tool("run_command"));
+        assert!(!is_read_only_tool("run_skill"));
     }
 
     #[test]

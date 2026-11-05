@@ -1,5 +1,5 @@
 use crate::engine::{
-    execute_tool, fetch_available_models, stream_completion, strip_tool_tags, ModelInfo,
+    execute_tool, fetch_available_models, is_read_only_tool, stream_completion, strip_tool_tags, ModelInfo,
     StreamUpdate,
 };
 use crate::runtime_env::{build_configured_system_prompt, mask_output_data};
@@ -137,6 +137,7 @@ pub struct SiloApp {
     pub cancel_token: Option<CancellationToken>,
     pub rx: Option<UnboundedReceiver<StreamUpdate>>,
     pub tool_rx: Option<UnboundedReceiver<(String, String, bool, String)>>,
+    pub tool_tx: Option<UnboundedSender<(String, String, bool, String)>>,
     pub live_thinking: String,
     pub live_content: String,
     pub live_tool_draft: String,
@@ -406,6 +407,7 @@ impl SiloApp {
             cancel_token: None,
             rx: None,
             tool_rx: None,
+            tool_tx: None,
             live_thinking: String::new(),
             live_content: String::new(),
             live_tool_draft: String::new(),
@@ -508,6 +510,9 @@ impl SiloApp {
         }
         self.is_generating = false;
         self.rx = None;
+        self.tool_rx = None;
+        self.tool_tx = None;
+        self.pending_tool_calls.clear();
         self.status_message = "Cancelled".to_string();
     }
 
@@ -831,7 +836,7 @@ impl SiloApp {
             name: tool_name.clone(),
             arguments: args_json.clone(),
             output: None,
-            status: ToolStatus::Running,
+            status: ToolStatus::Pending,
         };
 
         self.pending_tool_calls = vec![tc.clone()];
@@ -843,17 +848,7 @@ impl SiloApp {
         }
         self.save_active_session();
 
-        self.show_process_panel = true;
-        self.status_message = format!("Running tool: {}...", tool_name);
-
-        let handle = self.tokio_handle.clone();
-        let (tx, rx) = unbounded_channel();
-        self.tool_rx = Some(rx);
-
-        handle.spawn(async move {
-            let (ok, output) = execute_tool(&tool_name, &args_json).await;
-            let _ = tx.send((id, tool_name, ok, output));
-        });
+        self.execute_pending_tools();
     }
 
     pub fn handle_stream_events(&mut self) {
@@ -1011,7 +1006,7 @@ impl SiloApp {
                         }
                         self.save_active_session();
 
-                        self.execute_next_tool();
+                        self.execute_pending_tools();
                     } else {
                         let trimmed = content.trim();
                         let lower_c = trimmed.to_lowercase();
@@ -1160,46 +1155,94 @@ impl SiloApp {
         }
     }
 
-    pub fn execute_next_tool(&mut self) {
-        let tool = match self
+    pub fn execute_pending_tools(&mut self) {
+        // If any tool is currently running, wait for it to complete
+        let running_count = self
             .pending_tool_calls
-            .iter_mut()
-            .find(|t| t.status == ToolStatus::Pending)
-        {
-            Some(t) => {
-                t.status = ToolStatus::Running;
-                t.clone()
-            }
-            None => {
-                self.pending_tool_calls.clear();
-                return;
-            }
-        };
-
-        // Update status in session messages as well
-        if let Some(sess) = self.active_session_mut() {
-            if let Some(last_msg) = sess.messages.last_mut() {
-                if let Some(tc) = last_msg.tool_calls.iter_mut().find(|t| t.id == tool.id) {
-                    tc.status = ToolStatus::Running;
-                }
-            }
+            .iter()
+            .filter(|t| t.status == ToolStatus::Running)
+            .count();
+        if running_count > 0 {
+            return;
         }
 
-        self.show_process_panel = true;
-        self.status_message = format!("Running tool: {}...", tool.name);
+        // Find pending tools
+        let pending_indices: Vec<usize> = self
+            .pending_tool_calls
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.status == ToolStatus::Pending)
+            .map(|(i, _)| i)
+            .collect();
 
-        let tool_id = tool.id.clone();
-        let name = tool.name.clone();
-        let args_str = tool.arguments.clone();
+        if pending_indices.is_empty() {
+            // All tools in this turn are done
+            self.tool_rx = None;
+            self.tool_tx = None;
+            self.pending_tool_calls.clear();
+            self.empty_recovery_count = 0;
+            self.start_generation();
+            return;
+        }
+
+        // Determine next batch:
+        // Contiguous read-only tools can run concurrently.
+        // Mutating tools execute strictly solo.
+        let first_idx = pending_indices[0];
+        let first_is_ro = is_read_only_tool(&self.pending_tool_calls[first_idx].name);
+
+        let batch_indices: Vec<usize> = if first_is_ro {
+            let mut indices = Vec::new();
+            for &idx in &pending_indices {
+                if is_read_only_tool(&self.pending_tool_calls[idx].name) {
+                    indices.push(idx);
+                } else {
+                    break;
+                }
+            }
+            indices
+        } else {
+            vec![first_idx]
+        };
+
+        if self.tool_rx.is_none() || self.tool_tx.is_none() {
+            let (tx, rx) = unbounded_channel();
+            self.tool_rx = Some(rx);
+            self.tool_tx = Some(tx);
+        }
+
+        let tx = self.tool_tx.as_ref().unwrap().clone();
         let handle = self.tokio_handle.clone();
+        self.show_process_panel = true;
 
-        let (tx, rx) = unbounded_channel();
-        self.tool_rx = Some(rx);
+        if batch_indices.len() > 1 {
+            self.status_message = format!("Running {} tools in parallel...", batch_indices.len());
+        } else if let Some(&idx) = batch_indices.first() {
+            self.status_message = format!("Running tool: {}...", self.pending_tool_calls[idx].name);
+        }
 
-        handle.spawn(async move {
-            let (ok, output) = execute_tool(&name, &args_str).await;
-            let _ = tx.send((tool_id, name, ok, output));
-        });
+        for &idx in &batch_indices {
+            let tool = &mut self.pending_tool_calls[idx];
+            tool.status = ToolStatus::Running;
+            let tool_id = tool.id.clone();
+            let name = tool.name.clone();
+            let args_str = tool.arguments.clone();
+
+            // Update status in session messages as well
+            if let Some(sess) = self.active_session_mut() {
+                if let Some(last_msg) = sess.messages.last_mut() {
+                    if let Some(tc) = last_msg.tool_calls.iter_mut().find(|t| t.id == tool_id) {
+                        tc.status = ToolStatus::Running;
+                    }
+                }
+            }
+
+            let task_tx = tx.clone();
+            handle.spawn(async move {
+                let (ok, output) = execute_tool(&name, &args_str).await;
+                let _ = task_tx.send((tool_id, name, ok, output));
+            });
+        }
     }
 
     pub fn on_tool_completed(
@@ -1270,8 +1313,9 @@ impl SiloApp {
         };
 
         if let Some(sess) = self.active_session_mut() {
-            // Update the tool call in the last assistant message
-            for msg in sess.messages.iter_mut().rev() {
+            // Find the assistant message that requested this tool
+            let mut target_asst_idx = None;
+            for (idx, msg) in sess.messages.iter_mut().enumerate().rev() {
                 if msg.role == MessageRole::Assistant {
                     if let Some(tc) = msg.tool_calls.iter_mut().find(|t| t.id == tool_id) {
                         tc.status = if ok {
@@ -1280,27 +1324,41 @@ impl SiloApp {
                             ToolStatus::Failed
                         };
                         tc.output = Some(effective_output.clone());
+                        target_asst_idx = Some(idx);
                         break;
                     }
                 }
             }
 
-            sess.messages.push(ChatMessage::tool(instruction, &tool_id));
+            if let Some(asst_idx) = target_asst_idx {
+                let tool_order: Vec<String> = sess.messages[asst_idx]
+                    .tool_calls
+                    .iter()
+                    .map(|tc| tc.id.clone())
+                    .collect();
+
+                sess.messages.push(ChatMessage::tool(instruction, &tool_id));
+
+                // Sort trailing tool messages right after this assistant message
+                // so they strictly preserve the declared tool_calls order for API compliance
+                let start_idx = asst_idx + 1;
+                let end_idx = sess.messages.len();
+                if start_idx < end_idx {
+                    sess.messages[start_idx..end_idx].sort_by_key(|m| {
+                        m.tool_call_id
+                            .as_ref()
+                            .and_then(|id| tool_order.iter().position(|x| x == id))
+                            .unwrap_or(usize::MAX)
+                    });
+                }
+            } else {
+                sess.messages.push(ChatMessage::tool(instruction, &tool_id));
+            }
         }
         self.save_active_session();
 
-        // Check if there are more pending tools in this turn
-        let has_more = self
-            .pending_tool_calls
-            .iter()
-            .any(|t| t.status == ToolStatus::Pending);
-        if has_more {
-            self.execute_next_tool();
-        } else {
-            self.pending_tool_calls.clear();
-            self.empty_recovery_count = 0;
-            self.start_generation();
-        }
+        // Advance to next tool batch or complete generation
+        self.execute_pending_tools();
     }
 }
 
@@ -1591,8 +1649,14 @@ impl eframe::App for SiloApp {
 
         if let Some(rx) = &mut self.tool_rx {
             ctx.request_repaint();
-            if let Ok((tool_id, tool_name, ok, output)) = rx.try_recv() {
-                self.tool_rx = None;
+            let mut completed = Vec::new();
+            loop {
+                match rx.try_recv() {
+                    Ok(res) => completed.push(res),
+                    Err(_) => break,
+                }
+            }
+            for (tool_id, tool_name, ok, output) in completed {
                 self.on_tool_completed(tool_id, tool_name, ok, output);
             }
         }
