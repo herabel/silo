@@ -471,6 +471,15 @@ impl SiloApp {
             default_max_output_tokens: self.default_max_output_tokens,
         };
         cfg.save();
+
+        // Keep router registry primary instance synchronized with current server URL
+        if let Ok(mut reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.write() {
+            reg.register(crate::engine::router::InstanceMetrics::new(
+                "primary",
+                "Primary Endpoint",
+                &self.server_url,
+            ));
+        }
     }
 
     pub fn new_chat(&mut self) {
@@ -751,7 +760,11 @@ impl SiloApp {
                 self.process_logs.push(format!("◈ [Router] Affinity: {} ({})", instance_id, reason));
                 if let Ok(reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.read() {
                     if let Some(inst) = reg.get(&instance_id) {
-                        (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                        if instance_id == "primary" {
+                            (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                        } else {
+                            (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                        }
                     } else {
                         (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
                     }
@@ -765,7 +778,11 @@ impl SiloApp {
                 sess.routing.consecutive_slow_turns = 0;
                 if let Ok(reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.read() {
                     if let Some(inst) = reg.get(&new_instance_id) {
-                        (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                        if new_instance_id == "primary" {
+                            (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                        } else {
+                            (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                        }
                     } else {
                         (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
                     }
@@ -778,7 +795,11 @@ impl SiloApp {
                 self.process_logs.push(format!("◈ [Router] Instance selection: {}", instance_id));
                 if let Ok(reg) = crate::engine::router::GLOBAL_INSTANCE_REGISTRY.read() {
                     if let Some(inst) = reg.get(&instance_id) {
-                        (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                        if instance_id == "primary" {
+                            (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
+                        } else {
+                            (inst.base_url.clone(), inst.api_key.clone().or_else(|| if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) }))
+                        }
                     } else {
                         (self.server_url.clone(), if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) })
                     }
