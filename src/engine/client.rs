@@ -1441,7 +1441,7 @@ pub async fn stream_completion(
                     }
                     let asst_obj = json!({
                         "role": "assistant",
-                        "content": if trimmed.is_empty() { Value::Null } else { Value::String(trimmed.to_string()) },
+                        "content": if trimmed.is_empty() { Value::String(String::new()) } else { Value::String(trimmed.to_string()) },
                         "tool_calls": tc_objs
                     });
                     // DO NOT attach reasoning_content to past turns: it blows up context window and causes immediate EOS!
@@ -1551,16 +1551,6 @@ pub async fn stream_completion(
         }
     }
 
-    // If the conversation ends with tool execution results, guarantee a user synthesis directive
-    // so Qwen 2.5 / llama.cpp Jinja template never emits an immediate empty EOS response!
-    if let Some(last) = governed_messages.last() {
-        if last.get("role").and_then(|r| r.as_str()) == Some("tool") {
-            governed_messages.push(json!({
-                "role": "user",
-                "content": "[DIRECTIVE]: Tool execution completed and all required data has been gathered. Conclude your thinking and write your comprehensive, definitive final markdown dossier now. Do NOT call any more tools and do NOT output conversational filler."
-            }));
-        }
-    }
 
     let payload_messages = governed_messages;
 
@@ -1696,7 +1686,14 @@ pub async fn stream_completion(
     )));
 
     if !resp.status().is_success() {
-        let err_msg = format!("Server returned HTTP status: {}", resp.status());
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+        let trimmed_body = body_text.trim();
+        let err_msg = if !trimmed_body.is_empty() {
+            format!("HTTP {}: {}", status, trimmed_body)
+        } else {
+            format!("Server returned HTTP status: {}", status)
+        };
         let _ = tx.send(StreamUpdate::Log(format!("❌ [API Error] {}", err_msg)));
         let _ = tx.send(StreamUpdate::Error(err_msg));
         return;
