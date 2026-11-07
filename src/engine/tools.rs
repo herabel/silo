@@ -1,5 +1,39 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static DDG_LAST_FAILURE: AtomicI64 = AtomicI64::new(0);
+static DDG_BACKOFF_SECS: AtomicU32 = AtomicU32::new(30);
+
+pub fn is_ddg_available() -> bool {
+    let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(_) => return true,
+    };
+    let last_fail = DDG_LAST_FAILURE.load(Ordering::Relaxed);
+    if last_fail == 0 {
+        return true;
+    }
+    let backoff = DDG_BACKOFF_SECS.load(Ordering::Relaxed) as i64;
+    now.saturating_sub(last_fail) >= backoff
+}
+
+pub fn record_ddg_failure() {
+    let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(_) => 0,
+    };
+    DDG_LAST_FAILURE.store(now, Ordering::Relaxed);
+    let cur = DDG_BACKOFF_SECS.load(Ordering::Relaxed);
+    let next = (cur * 2).clamp(30, 180);
+    DDG_BACKOFF_SECS.store(next, Ordering::Relaxed);
+}
+
+pub fn record_ddg_success() {
+    DDG_LAST_FAILURE.store(0, Ordering::Relaxed);
+    DDG_BACKOFF_SECS.store(30, Ordering::Relaxed);
+}
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -380,7 +414,35 @@ pub fn clean_search_query(raw: &str) -> String {
         }
     }
 
+    // Strip search operators like site:..., filetype:...
+    if let Ok(re_op) = regex::Regex::new(r#"(?i)(?:site|filetype|ext):\S+"#) {
+        q = re_op.replace_all(&q, "").trim().to_string();
+    }
+
     q
+}
+
+pub fn simplify_query_keywords(raw: &str) -> String {
+    const STOPWORDS: &[&str] = &[
+        "a", "an", "the", "in", "on", "of", "for", "to", "and", "or", "with", "by", "at", "from",
+        "is", "are", "was", "were", "be", "been", "as", "into", "through", "over", "between",
+        "about", "how", "what", "why", "when", "where", "which", "who", "whom", "this", "that",
+        "these", "those", "can", "could", "should", "would", "do", "does", "did", "not", "no",
+        "vs", "versus", "using", "towards"
+    ];
+
+    let tokens: Vec<&str> = raw
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == ':' || c == '"' || c == '\'' || c == '(' || c == ')')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty() && s.len() >= 2)
+        .filter(|s| !STOPWORDS.contains(&s.to_lowercase().as_str()))
+        .collect();
+
+    if tokens.is_empty() {
+        return raw.to_string();
+    }
+
+    tokens.join(" ")
 }
 
 fn strip_html_tags(s: &str) -> String {
@@ -429,7 +491,8 @@ fn percent_decode(s: &str) -> String {
 async fn native_ddg_html_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-        .timeout(Duration::from_secs(8))
+        .connect_timeout(Duration::from_millis(800))
+        .timeout(Duration::from_secs(4))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
@@ -522,7 +585,8 @@ async fn native_ddg_html_search(query: &str, limit: usize) -> Result<String, Str
 async fn native_ddg_lite_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-        .timeout(Duration::from_secs(7))
+        .connect_timeout(Duration::from_millis(800))
+        .timeout(Duration::from_secs(4))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
@@ -727,6 +791,185 @@ async fn native_wikipedia_search(query: &str, limit: usize) -> Result<String, St
 
     if results.is_empty() {
         return Err("Empty Wikipedia results".to_string());
+    }
+
+    serde_json::to_string(&results).map_err(|e| e.to_string())
+}
+
+async fn native_openalex_search(query: &str, limit: usize) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Silo-ResearchAgent/1.0 (Desktop AI Workbench; mailto:artem@silo.local)")
+        .connect_timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_secs(6))
+        .build()
+        .map_err(|e| format!("Client error: {}", e))?;
+
+    let clean_q = clean_search_query(query);
+    let encoded_q = urlencoding_encode(&clean_q);
+    let url = format!(
+        "https://api.openalex.org/works?search={}&per_page={}",
+        encoded_q,
+        limit.clamp(1, 10)
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("OpenAlex request failed: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("OpenAlex read error: {}", e))?;
+
+    let val: serde_json::Value = serde_json::from_str(&resp).map_err(|e| e.to_string())?;
+    let items = val
+        .get("results")
+        .and_then(|r| r.as_array())
+        .ok_or_else(|| "No results array in OpenAlex response".to_string())?;
+
+    let mut results = Vec::new();
+    for item in items.iter().take(limit) {
+        let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+        if title.is_empty() {
+            continue;
+        }
+
+        let doi = item.get("doi").and_then(|d| d.as_str());
+        let landing_url = item
+            .get("primary_location")
+            .and_then(|p| p.get("landing_page_url"))
+            .and_then(|u| u.as_str());
+        let openalex_id = item.get("id").and_then(|i| i.as_str()).unwrap_or("");
+
+        let url = doi.or(landing_url).unwrap_or(openalex_id);
+
+        let pub_year = item
+            .get("publication_year")
+            .and_then(|y| y.as_i64())
+            .map(|y| y.to_string())
+            .unwrap_or_else(|| "Recent".to_string());
+
+        let mut snippet = String::new();
+        if let Some(inv_obj) = item.get("abstract_inverted_index").and_then(|i| i.as_object()) {
+            let mut word_positions: Vec<(usize, &str)> = Vec::new();
+            for (word, positions) in inv_obj {
+                if let Some(pos_arr) = positions.as_array() {
+                    for p in pos_arr {
+                        if let Some(idx) = p.as_u64() {
+                            word_positions.push((idx as usize, word.as_str()));
+                        }
+                    }
+                }
+            }
+            word_positions.sort_by_key(|&(idx, _)| idx);
+            let reconstructed: Vec<&str> = word_positions.into_iter().map(|(_, w)| w).collect();
+            snippet = reconstructed.join(" ");
+            if snippet.len() > 600 {
+                let end = snippet.char_indices().nth(600).map(|(i, _)| i).unwrap_or(snippet.len());
+                snippet = format!("{}...", &snippet[..end]);
+            }
+        }
+
+        if snippet.is_empty() {
+            if let Some(topics) = item.get("topics").and_then(|t| t.as_array()) {
+                let names: Vec<&str> = topics
+                    .iter()
+                    .filter_map(|t| t.get("display_name").and_then(|d| d.as_str()))
+                    .take(3)
+                    .collect();
+                if !names.is_empty() {
+                    snippet = format!("Topics: {}", names.join(", "));
+                }
+            }
+        }
+
+        results.push(serde_json::json!({
+            "title": format!("{} ({})", title, pub_year),
+            "url": url,
+            "snippet": snippet
+        }));
+    }
+
+    if results.is_empty() {
+        return Err("No OpenAlex papers found".to_string());
+    }
+
+    serde_json::to_string(&results).map_err(|e| e.to_string())
+}
+
+async fn native_crossref_search(query: &str, limit: usize) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Silo-ResearchAgent/1.0 (Desktop AI Workbench; mailto:artem@silo.local)")
+        .connect_timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("Client error: {}", e))?;
+
+    let clean_q = clean_search_query(query);
+    let encoded_q = urlencoding_encode(&clean_q);
+    let url = format!(
+        "https://api.crossref.org/works?query={}&rows={}",
+        encoded_q,
+        limit.clamp(1, 10)
+    );
+
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("CrossRef request failed: {}", e))?
+        .text()
+        .await
+        .map_err(|e| format!("CrossRef read error: {}", e))?;
+
+    let val: serde_json::Value = serde_json::from_str(&resp).map_err(|e| e.to_string())?;
+    let items = val
+        .get("message")
+        .and_then(|m| m.get("items"))
+        .and_then(|i| i.as_array())
+        .ok_or_else(|| "No items array in CrossRef response".to_string())?;
+
+    let mut results = Vec::new();
+    for item in items.iter().take(limit) {
+        let title = item
+            .get("title")
+            .and_then(|t| t.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|t| t.as_str())
+            .unwrap_or("");
+        if title.is_empty() {
+            continue;
+        }
+
+        let doi_url = item
+            .get("DOI")
+            .and_then(|d| d.as_str())
+            .map(|doi| format!("https://doi.org/{}", doi))
+            .unwrap_or_else(|| {
+                item.get("URL")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            });
+
+        let mut snippet = String::new();
+        if let Some(abs) = item.get("abstract").and_then(|a| a.as_str()) {
+            snippet = strip_html_tags(abs);
+            if snippet.len() > 500 {
+                let end = snippet.char_indices().nth(500).map(|(i, _)| i).unwrap_or(snippet.len());
+                snippet = format!("{}...", &snippet[..end]);
+            }
+        }
+
+        results.push(serde_json::json!({
+            "title": title,
+            "url": doi_url,
+            "snippet": snippet
+        }));
+    }
+
+    if results.is_empty() {
+        return Err("No CrossRef entries found".to_string());
     }
 
     serde_json::to_string(&results).map_err(|e| e.to_string())
@@ -1190,69 +1433,104 @@ pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
         return (false, "Search query is empty.".to_string());
     }
 
-    // 1. Native Rust DuckDuckGo HTML GET Search
-    if let Ok(out) = native_ddg_html_search(&query, limit).await {
-        if out.starts_with('[') && out.len() > 2 {
-            return (true, out);
-        }
-    }
+    let simplified = simplify_query_keywords(&query);
 
-    // 2. DuckDuckGo Lite Fallback
-    if let Ok(out_lite) = native_ddg_lite_search(&query, limit).await {
-        if out_lite.starts_with('[') && out_lite.len() > 2 {
-            return (true, out_lite);
-        }
-    }
-
-    // 2b. If long query returns nothing, retry simplified with first 5-6 words
-    let words: Vec<&str> = query.split_whitespace().collect();
-    if words.len() > 5 {
-        let simplified = words[..5].join(" ");
-        if let Ok(out_retry) = native_ddg_html_search(&simplified, limit).await {
-            if out_retry.starts_with('[') && out_retry.len() > 2 {
-                return (true, out_retry);
+    // 1. DuckDuckGo with fast failover (800ms connect timeout + circuit breaker)
+    if is_ddg_available() {
+        match native_ddg_html_search(&query, limit).await {
+            Ok(out) if out.starts_with('[') && out.len() > 2 => {
+                record_ddg_success();
+                return (true, out);
             }
-        }
-        if let Ok(out_lite_retry) = native_ddg_lite_search(&simplified, limit).await {
-            if out_lite_retry.starts_with('[') && out_lite_retry.len() > 2 {
-                return (true, out_lite_retry);
+            Err(e) if e.contains("timed out") || e.contains("connect") || e.contains("error") => {
+                // Network/timeout failure: host is unreachable or blocking TCP SYN.
+                // Trip circuit breaker and bypass all other DDG attempts immediately!
+                record_ddg_failure();
+            }
+            _ => {
+                if let Ok(out_lite) = native_ddg_lite_search(&query, limit).await {
+                    if out_lite.starts_with('[') && out_lite.len() > 2 {
+                        record_ddg_success();
+                        return (true, out_lite);
+                    }
+                }
             }
         }
     }
 
-    // 3. DuckDuckGo Instant Answer API Fallback
-    if let Ok(out_instant) = native_ddg_instant_search(&query, limit).await {
-        if out_instant.starts_with('[') && out_instant.len() > 2 {
-            return (true, out_instant);
+    // 2. Academic & Technical Literature (OpenAlex: 250M+ peer-reviewed papers & preprints - ~600-1000ms)
+    if let Ok(out_alex) = native_openalex_search(&query, limit).await {
+        if out_alex.starts_with('[') && out_alex.len() > 2 {
+            return (true, out_alex);
+        }
+    }
+    if !simplified.is_empty() && simplified != query {
+        if let Ok(out_alex) = native_openalex_search(&simplified, limit).await {
+            if out_alex.starts_with('[') && out_alex.len() > 2 {
+                return (true, out_alex);
+            }
         }
     }
 
-    // 4. Wikipedia Search API Fallback (language-aware ru/en)
+    // 2b. Specific technical domain anchor on OpenAlex
+    let q_words: Vec<&str> = query.split_whitespace().collect();
+    if q_words.len() > 1 {
+        for w in &q_words {
+            let clean_w = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_');
+            if clean_w.len() >= 7 && !clean_w.eq_ignore_ascii_case("attack") && !clean_w.eq_ignore_ascii_case("timing") && !clean_w.eq_ignore_ascii_case("vulnerability") {
+                if let Ok(out_anchor) = native_openalex_search(clean_w, limit).await {
+                    if out_anchor.starts_with('[') && out_anchor.len() > 2 {
+                        return (true, out_anchor);
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. CrossRef Academic Metadata Fallback (~600ms)
+    if let Ok(out_cross) = native_crossref_search(&query, limit).await {
+        if out_cross.starts_with('[') && out_cross.len() > 2 {
+            return (true, out_cross);
+        }
+    }
+
+    // 4. Wikipedia Search API Fallback (ru/en - ~500ms)
     if let Ok(out_wiki) = native_wikipedia_search(&query, limit).await {
         if out_wiki.starts_with('[') && out_wiki.len() > 2 {
             return (true, out_wiki);
         }
     }
 
-    // 5. Fallback to web_scout search if binary is available locally
-    if let Some(bin) = find_web_scout_bin() {
-        let mut cmd = Command::new(bin);
-        cmd.arg("search").arg(&query).arg(limit.to_string());
-        #[cfg(windows)]
-        {
-            cmd.creation_flags(0x08000000);
+    // 5. DuckDuckGo Instant Answer API Fallback (only if DDG is unblocked)
+    if is_ddg_available() {
+        if let Ok(out_instant) = native_ddg_instant_search(&query, limit).await {
+            if out_instant.starts_with('[') && out_instant.len() > 2 {
+                return (true, out_instant);
+            }
         }
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    }
 
-        if let Ok(mut child) = cmd.spawn() {
-            if let Ok(Ok(status)) = timeout(Duration::from_secs(12), child.wait()).await {
-                let mut buf = Vec::new();
-                if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_end(&mut buf).await;
-                }
-                let content = String::from_utf8_lossy(&buf).trim().to_string();
-                if status.success() && content.starts_with('[') && content.len() > 2 {
-                    return (true, content);
+    // 6. Local web_scout fallback if present and DDG is available
+    if is_ddg_available() {
+        if let Some(bin) = find_web_scout_bin() {
+            let mut cmd = Command::new(bin);
+            cmd.arg("search").arg(&query).arg(limit.to_string());
+            #[cfg(windows)]
+            {
+                cmd.creation_flags(0x08000000);
+            }
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+            if let Ok(mut child) = cmd.spawn() {
+                if let Ok(Ok(status)) = timeout(Duration::from_secs(4), child.wait()).await {
+                    let mut buf = Vec::new();
+                    if let Some(mut out) = child.stdout.take() {
+                        let _ = out.read_to_end(&mut buf).await;
+                    }
+                    let content = String::from_utf8_lossy(&buf).trim().to_string();
+                    if status.success() && content.starts_with('[') && content.len() > 2 {
+                        return (true, content);
+                    }
                 }
             }
         }
@@ -1667,6 +1945,42 @@ pub async fn run_search_files(pattern: &str, path_str: &str) -> (bool, String) {
     }
 }
 
+/// Returns true if the tool does not mutate files or execute arbitrary shell scripts.
+/// Read-only tools can safely be executed in parallel.
+pub fn is_read_only_tool(name: &str) -> bool {
+    let lower = name.to_lowercase();
+    matches!(
+        lower.as_str(),
+        "arxiv_search"
+            | "arxiv"
+            | "search_arxiv"
+            | "web_search"
+            | "search"
+            | "duckduckgo_search"
+            | "google_search"
+            | "fetch_page"
+            | "fetch"
+            | "read_url"
+            | "web_fetch"
+            | "read_file"
+            | "read"
+            | "list_dir"
+            | "ls"
+            | "dir"
+            | "search_files"
+            | "grep"
+            | "search_code"
+            | "execute_python"
+            | "python"
+            | "calc"
+            | "eval"
+            | "record_finding"
+            | "finding"
+            | "record_contradiction"
+            | "contradiction"
+    )
+}
+
 pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
     let lower_name = name.to_lowercase();
     let norm_args = crate::engine::clean_and_normalize_tool_arguments(&lower_name, raw_args);
@@ -1892,6 +2206,31 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
         let query = extract_query_arg(args_str);
         let limit = extract_limit_arg(args_str).unwrap_or(4);
         run_arxiv_search(&query, limit).await
+    } else if lower_name == "record_finding" || lower_name == "finding" {
+        let (source, claim, details, caveats, verified) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+            let s = val.get("source").or_else(|| val.get("url")).and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
+            let c = val.get("claim").or_else(|| val.get("title")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let d = val.get("details").or_else(|| val.get("content")).or_else(|| val.get("notes")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let cav = val.get("caveats").or_else(|| val.get("contradiction")).and_then(|v| v.as_str()).map(|s| s.to_string());
+            let ver = val.get("verified").and_then(|v| v.as_bool()).unwrap_or(true);
+            (s, c, d, cav, ver)
+        } else {
+            ("Unknown".to_string(), args_str.to_string(), String::new(), None, true)
+        };
+        (true, crate::engine::record_finding_to_global_board(&source, &claim, &details, caveats.as_deref(), verified))
+    } else if lower_name == "record_contradiction" || lower_name == "contradiction" {
+        let (point, ca, sa, cb, sb, analysis) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+            let p = val.get("point").or_else(|| val.get("topic")).and_then(|v| v.as_str()).unwrap_or("Contradiction").to_string();
+            let ca = val.get("claim_a").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let sa = val.get("source_a").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let cb = val.get("claim_b").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let sb = val.get("source_b").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let an = val.get("analysis").or_else(|| val.get("resolution")).and_then(|v| v.as_str()).unwrap_or("").to_string();
+            (p, ca, sa, cb, sb, an)
+        } else {
+            ("Conflict".to_string(), args_str.to_string(), "".to_string(), "".to_string(), "".to_string(), "".to_string())
+        };
+        (true, crate::engine::record_contradiction_to_global_board(&point, &ca, &sa, &cb, &sb, &analysis))
     } else if lower_name == "run_skill" || lower_name == "skill" {
         let (skill, script, args) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
             let sk = val
@@ -1911,7 +2250,7 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
                     .filter_map(|x| x.as_str().map(|s| s.to_string()))
                     .collect()
             } else if let Some(s) = val.get("args").and_then(|v| v.as_str()) {
-                s.split_whitespace().map(|x| x.to_string()).collect()
+                crate::engine::client::parse_cli_tokens(s)
             } else {
                 Vec::new()
             };
@@ -1990,6 +2329,21 @@ mod tests {
         assert!(ok, "arXiv search failed: {}", res);
         assert!(!res.contains("Face Mask"), "Should not match Face Mask");
         assert!(res.contains("Chunk") || res.contains("boundary") || res.contains("content-defined"));
+    }
+
+    #[test]
+    fn test_is_read_only_tool() {
+        assert!(is_read_only_tool("arxiv_search"));
+        assert!(is_read_only_tool("web_search"));
+        assert!(is_read_only_tool("fetch_page"));
+        assert!(is_read_only_tool("read_file"));
+        assert!(is_read_only_tool("list_dir"));
+        assert!(is_read_only_tool("search_files"));
+        assert!(is_read_only_tool("execute_python"));
+
+        assert!(!is_read_only_tool("write_file"));
+        assert!(!is_read_only_tool("run_command"));
+        assert!(!is_read_only_tool("run_skill"));
     }
 
     #[test]

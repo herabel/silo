@@ -26,7 +26,16 @@ impl EphemeralMemoryFile {
     /// The handle is closed after write so external runtimes (Python MSVCRT) can read
     /// without Win32 sharing violations. RAII Drop securely zeroes and deletes the file.
     pub fn create_from_bytes(bytes: &[u8], extension: &str) -> Result<Self, String> {
+        #[cfg(windows)]
         let temp_dir = std::env::temp_dir();
+
+        #[cfg(not(windows))]
+        let temp_dir = if std::path::Path::new("/dev/shm").is_dir() {
+            PathBuf::from("/dev/shm")
+        } else {
+            std::env::temp_dir()
+        };
+
         let unique_name = format!(
             "silo_ephemeral_{}.{}",
             uuid::Uuid::new_v4(),

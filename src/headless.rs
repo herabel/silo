@@ -1,17 +1,44 @@
-use crate::engine::{execute_tool, fetch_available_models, stream_completion, StreamUpdate};
+use crate::engine::{
+    execute_tool, fetch_available_models, is_read_only_tool, stream_completion, StreamUpdate,
+};
 use crate::runtime_env::{build_configured_system_prompt, build_system_prompt, mask_output_data};
 use crate::session::{ChatMessage, ContextConfig, ToolCallRecord, ToolStatus};
 use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
 const DEEP_RESEARCH_DIRECTIVE: &str = r#"DEEP RESEARCH DIRECTIVE:
-You are an investigative technical analyst. Follow a rigorous multi-phase research approach:
-1. IMMEDIATE TOOL DELEGATION: Never perform mental arithmetic, formula derivations, or parameter checks in <think>. Immediately offload all math, size calculations, and data processing to `execute_python`.
-2. Scout: Run multiple `web_search` queries covering technical specifications, standards, and data.
-3. Read: Call `fetch_page(url)` on relevant URLs from search results to inspect source documents.
-4. Compute: Validate mathematical models or verify equations using `execute_python`.
-5. STRICT TOOL LOOP ENFORCEMENT: Never output conversational filler or unexecuted promises in chat (such as "Let me fetch...", "I will search...", "Now checking..."). Always invoke the tool call directly. Only output natural language markdown when synthesizing the final comprehensive dossier.
-6. Synthesize: Formulate an exhaustive, highly structured technical dossier with citations and data tables."#;
+You are an investigative technical analyst and systems engineer conducting exhaustive, deep technical investigations.
+Follow this mandatory 4-Phase Research Protocol:
+
+PHASE 1: SCOUT & QUERY EXPANSION (Steps 1-3)
+- Execute multiple targeted `web_search` and `arxiv_search` queries across orthogonal dimensions:
+  * Theoretical mechanics & mathematical formulations.
+  * Real-world vulnerabilities, CVEs, and proof-of-concepts (e.g. KyberSlash1/2, timing leaks in division/poly_tomsg).
+  * Implementation-level pitfalls (e.g. LLVM compiler optimization destroying constant-time in pure Rust vs C vs ASM).
+  * Microarchitectural & hardware side-channels (e.g. AVX2 NTT vector register port contention, variable-time division instructions, frequency scaling).
+- Always use specific technical keywords (2-5 words). Avoid long conversational phrases in search queries.
+
+PHASE 2: DEEP INGESTION & EVIDENCE RECORDING (Steps 4-10)
+- Call `fetch_page(url)` on primary sources, official advisory sites, and papers.
+- As soon as concrete findings, CVEs, mechanisms, or numbers are discovered, record them into the encrypted Research Board using `record_finding(source, claim, details, caveats, verified)`.
+- Use `execute_python` to verify equations, timing differences, parameter calculations, or algorithmic steps.
+
+PHASE 3: ADVERSARIAL PROBING & CONTRADICTION ANALYSIS (Steps 11-16)
+- Actively search for contradictory perspectives, edge cases, and patch limitations:
+  * Does fixing division time completely eliminate side-channels, or do vector registers/subtle compiler flags reintroduce them?
+  * How do pure Rust crates (subtle, subtle-ng) interact with LLVM peephole optimizations vs handcrafted assembly?
+  * Record conflicting viewpoints using `record_contradiction(point, claim_a, source_a, claim_b, source_b, analysis)`.
+
+PHASE 4: EXHAUSTIVE SYNTHESIS (Final Step)
+- Synthesize an authoritative, publication-grade technical dossier structured as:
+  1. Executive Summary & Core Verdict
+  2. Theoretical & Mathematical Foundations
+  3. Root-Cause Vulnerability Mechanics (Instruction-level & algorithmic analysis)
+  4. Compiler & Implementation Pitfalls (Pure Rust vs C vs ASM, LLVM optimization risks)
+  5. Contradiction Analysis & Technical Debate Matrix
+  6. Defenses, Constant-Time Verification Tools & Hardening Recommendations
+  7. Verified Citation Matrix (DOIs, URLs, and source attribution).
+"#;
 
 pub async fn run_headless(args: Vec<String>) {
     let mut prompt_arg: Option<String> = None;
@@ -84,6 +111,57 @@ pub async fn run_headless(args: Vec<String>) {
         run_agent_session(&user_query, is_deep, model_arg.as_deref(), verbose).await;
     } else {
         print_help();
+    }
+}
+
+fn format_headless_tool_instruction(
+    tool_name: &str,
+    out: &str,
+    is_deep: bool,
+    fetch_count: &mut usize,
+    max_fetches: usize,
+) -> String {
+    let board_summary = if is_deep {
+        crate::engine::get_global_board_summary()
+    } else {
+        String::new()
+    };
+
+    let suffix = if !board_summary.is_empty() {
+        format!("\n\n{}", board_summary)
+    } else {
+        String::new()
+    };
+
+    if tool_name == "arxiv_search" || tool_name == "arxiv" {
+        if is_deep && *fetch_count < max_fetches {
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified technical papers retrieved. Extract concrete mechanisms, CVEs, or numbers and call `record_finding` to save them into working memory. If you need to verify math, call `execute_python`. If you need industry advisories, call `web_search` or `fetch_page`. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
+        } else {
+            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}", out, suffix)
+        }
+    } else if tool_name == "web_search" || tool_name == "search" {
+        if is_deep && *fetch_count < max_fetches {
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select key URLs and call `fetch_page(url)` to read primary documents, or call `record_finding` to store facts into the research board. Search for opposing views or patch analyses to uncover contradictions. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
+        } else {
+            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}", out, suffix)
+        }
+    } else if tool_name == "fetch_page" || tool_name == "fetch" {
+        *fetch_count += 1;
+        if is_deep && *fetch_count < max_fetches {
+            format!("Page Markdown:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Source read [{}/{}]. Extract specific CVEs, instruction sequences, or benchmarks into the research board using `record_finding`. If conflicting data exists, call `record_contradiction`. Proceed to next source or contradiction probe.{}", out, *fetch_count, max_fetches, suffix)
+        } else {
+            format!("Page Markdown:\n{}\n\n[INSTRUCTION]: Source read [{}/{}]. Now synthesize your final comprehensive dossier using the accumulated research board.{}", out, *fetch_count, max_fetches, suffix)
+        }
+    } else if tool_name == "record_finding" || tool_name == "finding" || tool_name == "record_contradiction" || tool_name == "contradiction" {
+        format!("Research Board Update:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Working memory updated. Continue investigating remaining subtopics, probe for contradictions, or synthesize the final dossier if all key areas are verified.", out)
+    } else if tool_name == "execute_python" || tool_name == "python" {
+        if is_deep {
+            format!("Python Execution Result:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Computation complete. Record verified numbers via `record_finding` or incorporate them into your analysis.{}", out, suffix)
+        } else {
+            format!("Python Execution Result:\n{}\n\n[INSTRUCTION]: Use this exact numerical result to formulate your final response to the user.", out)
+        }
+    } else {
+        format!("Command Execution Result:\n{}\n\n[INSTRUCTION]: Inspect stdout/stderr. Proceed with the task.{}", out, suffix)
     }
 }
 
@@ -328,20 +406,40 @@ pub async fn run_agent_session(
     let system_prompt = build_system_prompt();
 
     if is_deep {
+        crate::engine::init_global_research_board(query);
         messages.push(ChatMessage::system(DEEP_RESEARCH_DIRECTIVE));
     }
     messages.push(ChatMessage::user(query));
 
-    let max_tool_steps = if is_deep { 25 } else { 6 };
-    let max_fetches = if is_deep { 10 } else { 2 };
+    let max_tool_steps = if is_deep { 12 } else { 6 };
+    let max_fetches = if is_deep { 6 } else { 2 };
     let mut fetch_count = 0;
     let mut step = 0;
 
-    while step < max_tool_steps {
+    while step <= max_tool_steps {
         step += 1;
+        let is_synthesis_phase = is_deep && (step >= max_tool_steps || fetch_count >= max_fetches);
+        let enable_tools = !is_synthesis_phase;
+
+        if is_synthesis_phase && !messages.iter().any(|m| m.content.contains("[SYNTHESIS MANDATE]")) {
+            println!(
+                "\n--- [Final Synthesis Phase] Research phase complete. Disabling tools and commanding exhaustive technical dossier... ---"
+            );
+            let evidence = crate::engine::get_global_evidence_dossier();
+            let mandate = if !evidence.is_empty() {
+                format!(
+                    "[SYNTHESIS MANDATE]: Research phase complete. Synthesize your exhaustive, publication-grade technical dossier with detailed architectural mechanics, code-level pitfalls, contradiction analysis, and full citations based on your evidence board:\n\n{}",
+                    evidence
+                )
+            } else {
+                "[SYNTHESIS MANDATE]: Research phase complete. Deliver your exhaustive, publication-grade final technical dossier with all required sections: Executive Summary, Theoretical Foundations, Root-Cause Vulnerability Mechanics, Compiler & Implementation Pitfalls (Rust vs C/ASM), Contradiction Analysis, Defenses & Verification Tools, and Citation Matrix.".to_string()
+            };
+            messages.push(ChatMessage::user(&mandate));
+        }
+
         println!(
-            "\n--- [Step {}/{}] Generating completion from model... ---",
-            step, max_tool_steps
+            "\n--- [Step {}/{}] Generating completion from model (tools: {})... ---",
+            step, max_tool_steps, enable_tools
         );
 
         let (tx, mut rx) = unbounded_channel();
@@ -350,8 +448,6 @@ pub async fn run_agent_session(
         let model_clone = model.clone();
         let sys_prompt_clone = system_prompt.clone();
         let msgs_clone = messages.clone();
-
-        let enable_tools = !(is_deep && fetch_count >= max_fetches);
 
         let forced_tool = if step == 1 {
             let lower_q = query.to_lowercase();
@@ -375,6 +471,8 @@ pub async fn run_agent_session(
                 &msgs_clone,
                 enable_tools,
                 forced_tool,
+                32768,
+                8192,
                 tx,
                 cancel_token,
             )
@@ -405,6 +503,7 @@ pub async fn run_agent_session(
                 }
                 StreamUpdate::ToolDrafting(_) => {}
                 StreamUpdate::Payload(_) => {}
+                StreamUpdate::Telemetry { .. } => {}
                 StreamUpdate::Log(l) => {
                     if verbose {
                         eprintln!("[LOG] {}", l);
@@ -490,19 +589,59 @@ pub async fn run_agent_session(
                 continue;
             }
 
+            let is_synthesis_deferral = is_synthesis_phase
+                && content.len() < 600
+                && (content.contains("need more granular")
+                    || content.contains("Executing targeted queries")
+                    || content.contains("I will execute")
+                    || content.contains("Board is empty")
+                    || content.contains("Current Status"));
+
+            if is_synthesis_deferral && step <= max_tool_steps + 1 {
+                println!("\n[Synthesis Enforcement]: Model deferred dossier writing. Enforcing immediate synthesis turn...");
+                messages.push(ChatMessage::assistant(&content, thinking));
+                messages.push(ChatMessage::user("[SYNTHESIS MANDATE]: Tools are now concluded. You have sufficient evidence accumulated in your research board and prompt history above. Synthesize the complete, exhaustive publication-grade technical dossier right now. Do not defer or output transitional filler. Output the full technical report."));
+                continue;
+            }
+
             if content.trim().is_empty() {
                 if let Some(th) = &thinking {
                     if !th.trim().is_empty() {
-                        println!(
-                            "\n[Notice]: Model completed thinking without emitting markdown text."
-                        );
-                        messages.push(ChatMessage::assistant("*(Completed reasoning)*", thinking));
-                        break;
+                        let th_calls = crate::engine::extract_text_tool_calls(th);
+                        if !th_calls.is_empty() {
+                            println!(
+                                "\n[Stream Rescue]: Extracted {} tool call(s) from reasoning block.",
+                                th_calls.len()
+                            );
+                            tool_calls = th_calls;
+                        } else if is_deep && step < max_tool_steps {
+                            println!(
+                                "\n[Agentic Nudge]: Model concluded reasoning without emitting text. Nudging for final synthesis..."
+                            );
+                            messages.push(ChatMessage::assistant("*(Completed reasoning)*", thinking.clone()));
+                            let evidence = crate::engine::get_global_evidence_dossier();
+                            let prompt = if !evidence.is_empty() {
+                                format!("[DEEP RESEARCH INSTRUCTION]: You completed your investigation. Now synthesize your exhaustive publication-grade technical dossier with full technical depth and citations, incorporating your evidence board:\n\n{}", evidence)
+                            } else {
+                                "[DEEP RESEARCH INSTRUCTION]: You completed your internal reasoning. Now deliver your exhaustive publication-grade final technical dossier with all sections, theoretical mechanics, compiler pitfalls, contradiction analysis, and verified sources.".to_string()
+                            };
+                            messages.push(ChatMessage::user(&prompt));
+                            continue;
+                        }
                     }
                 }
-                break;
+                if tool_calls.is_empty() {
+                    break;
+                }
             }
 
+            if is_deep {
+                let evidence = crate::engine::get_global_evidence_dossier();
+                if !evidence.is_empty() && !messages.iter().any(|m| m.content.contains("# Research Evidence Board:")) {
+                    println!("\n[Evidence Board Ingestion]: Injecting {} chars of accumulated research board into final synthesis turn...", evidence.len());
+                    messages.push(ChatMessage::system(&format!("[SYNTHESIS INSTRUCTION]: You have gathered the following structured evidence in your encrypted research board. Synthesize your exhaustive final dossier based on these verified facts and contradictions:\n\n{}", evidence)));
+                }
+            }
             messages.push(ChatMessage::assistant(&content, thinking));
             println!("\n=== Final Response Completed ===");
             break;
@@ -526,53 +665,80 @@ pub async fn run_agent_session(
         assistant_msg.tool_calls = assistant_records.clone();
         messages.push(assistant_msg);
 
-        // Execute each tool call
-        for tc in &tool_calls {
-            println!("\nExecuting tool [{}]...", tc.name);
-            let (ok, out) = execute_tool(&tc.name, &tc.arguments).await;
-            println!(
-                "Tool [{}] -> {}: ({} chars output)",
-                tc.name,
-                if ok { "SUCCESS" } else { "FAILED" },
-                out.len()
-            );
-
-            let instruction = if tc.name == "arxiv_search" || tc.name == "arxiv" {
-                if is_deep && fetch_count < max_fetches {
-                    format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.", out, max_fetches - fetch_count)
-                } else {
-                    format!(
-                        "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
-                        out
-                    )
-                }
-            } else if tc.name == "web_search" || tc.name == "search" {
-                if is_deep && fetch_count < max_fetches {
-                    format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", out, max_fetches - fetch_count)
-                } else {
-                    format!(
-                        "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
-                        out
-                    )
-                }
-            } else if tc.name == "fetch_page" || tc.name == "fetch" {
-                fetch_count += 1;
-                if is_deep && fetch_count < max_fetches {
-                    format!("Page Markdown:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Source read [{}/{}]. If additional pages or searches are needed to complete the research, proceed. If sufficient evidence has been gathered, produce the final comprehensive dossier.", out, fetch_count, max_fetches)
-                } else {
-                    format!("Page Markdown:\n{}\n\n[INSTRUCTION]: Now synthesize your final comprehensive dossier.", out)
-                }
-            } else if tc.name == "execute_python" || tc.name == "python" {
-                if is_deep {
-                    format!("Python Execution Result:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Computation complete. Incorporate these exact numbers into your analysis. If additional searches or pages are needed, proceed; otherwise, synthesize your comprehensive dossier.", out)
-                } else {
-                    format!("Python Execution Result:\n{}\n\n[INSTRUCTION]: Use this exact numerical result to formulate your final response to the user.", out)
+        // Execute tool calls (parallelizing contiguous read-only calls)
+        let mut idx = 0;
+        while idx < tool_calls.len() {
+            let is_ro = is_read_only_tool(&tool_calls[idx].name);
+            let mut batch = Vec::new();
+            if is_ro {
+                while idx < tool_calls.len() && is_read_only_tool(&tool_calls[idx].name) {
+                    batch.push(&tool_calls[idx]);
+                    idx += 1;
                 }
             } else {
-                format!("Command Execution Result:\n{}\n\n[INSTRUCTION]: Inspect stdout/stderr. Proceed with the task.", out)
-            };
+                batch.push(&tool_calls[idx]);
+                idx += 1;
+            }
 
-            messages.push(ChatMessage::tool(instruction, &tc.id));
+            if batch.len() > 1 {
+                println!("\nExecuting {} tools in parallel...", batch.len());
+                let mut handles = Vec::new();
+                for tc in &batch {
+                    let name = tc.name.clone();
+                    let args = tc.arguments.clone();
+                    let id = tc.id.clone();
+                    handles.push(tokio::spawn(async move {
+                        let (ok, out) = execute_tool(&name, &args).await;
+                        (id, name, args, ok, out)
+                    }));
+                }
+                for handle in handles {
+                    if let Ok((id, name, args, ok, out)) = handle.await {
+                        println!(
+                            "Tool [{}] -> {}: ({} chars output)",
+                            name,
+                            if ok { "SUCCESS" } else { "FAILED" },
+                            out.len()
+                        );
+                        if ok && (name == "web_search" || name == "arxiv_search" || name == "search") {
+                            crate::engine::auto_ingest_search_results(&out);
+                        } else if ok && (name == "fetch_page" || name == "fetch") {
+                            crate::engine::auto_ingest_page_fetch(&args, &out);
+                        }
+                        let instruction = format_headless_tool_instruction(
+                            &name,
+                            &out,
+                            is_deep,
+                            &mut fetch_count,
+                            max_fetches,
+                        );
+                        messages.push(ChatMessage::tool(instruction, &id));
+                    }
+                }
+            } else {
+                let tc = batch[0];
+                println!("\nExecuting tool [{}]...", tc.name);
+                let (ok, out) = execute_tool(&tc.name, &tc.arguments).await;
+                println!(
+                    "Tool [{}] -> {}: ({} chars output)",
+                    tc.name,
+                    if ok { "SUCCESS" } else { "FAILED" },
+                    out.len()
+                );
+                                if ok && (tc.name == "web_search" || tc.name == "arxiv_search" || tc.name == "search") {
+                    crate::engine::auto_ingest_search_results(&out);
+                } else if ok && (tc.name == "fetch_page" || tc.name == "fetch") {
+                    crate::engine::auto_ingest_page_fetch(&tc.arguments, &out);
+                }
+let instruction = format_headless_tool_instruction(
+                    &tc.name,
+                    &out,
+                    is_deep,
+                    &mut fetch_count,
+                    max_fetches,
+                );
+                messages.push(ChatMessage::tool(instruction, &tc.id));
+            }
         }
     }
 }

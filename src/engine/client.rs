@@ -29,6 +29,13 @@ pub enum StreamUpdate {
     ToolDrafting(String),
     Log(String),
     Payload(String),
+    #[allow(dead_code)]
+    Telemetry {
+        ttft_ms: u64,
+        tps: f64,
+        prompt_tokens: Option<u64>,
+        completion_tokens: Option<u64>,
+    },
     Finished {
         full_content: String,
         full_thinking: Option<String>,
@@ -221,6 +228,45 @@ pub fn strip_residual_tags(s: &str) -> String {
     cleaned
 }
 
+pub fn parse_cli_tokens(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut escaped = false;
+
+    for ch in input.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '\'' && !in_double {
+            in_single = !in_single;
+            continue;
+        }
+        if ch == '"' && !in_single {
+            in_double = !in_double;
+            continue;
+        }
+        if ch.is_whitespace() && !in_single && !in_double {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> String {
     let raw_trimmed = raw_args.trim();
     if raw_trimmed.is_empty() {
@@ -274,7 +320,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                         clean_val = strip_residual_tags(&clean_val);
                     }
                     if key == "args" {
-                        let items: Vec<Value> = clean_val.split_whitespace().map(|x| json!(x)).collect();
+                        let items: Vec<Value> = parse_cli_tokens(&clean_val).into_iter().map(Value::String).collect();
                         param_map.insert(key, Value::Array(items));
                     } else if key == "start_line" || key == "end_line" || key == "depth" {
                         if let Ok(num) = clean_val.parse::<i64>() {
@@ -511,22 +557,21 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
             .unwrap_or_else(|_| "{}".to_string());
     }
 
-    // 5. Key-Value parameter lines: key=val or key: val (e.g. path=...\ncontent=...)
-    let known_keys_pattern = r#"(?mi)^(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|limit|max_results|input|skill|script|args)\s*[:=]\s*(.*)$"#;
+    // 5. Key-Value parameter lines: key=val or key: val (e.g. path=...\ncontent=... or skill="ast-grep" script="" args="...")
+    let known_keys_pattern = r#"(?i)(?:^|[\r\n\s])(path|content|pattern|query|q|url|code|cmd|command|start_line|end_line|depth|limit|max_results|input|skill|script|args)\s*[:=]\s*"#;
     if let Ok(kv_re) = Regex::new(known_keys_pattern) {
         let matches: Vec<_> = kv_re.captures_iter(clean_input).collect();
         if !matches.is_empty() {
             let mut kv_map = serde_json::Map::new();
             for (i, cap) in matches.iter().enumerate() {
                 let key = cap[1].to_lowercase();
-                let val_match = cap.get(2).unwrap();
-                let start_idx = val_match.start();
+                let val_start = cap.get(0).unwrap().end();
                 let end_idx = if i + 1 < matches.len() {
                     matches[i + 1].get(0).unwrap().start()
                 } else {
                     clean_input.len()
                 };
-                let raw_val = clean_input[start_idx..end_idx].trim();
+                let raw_val = clean_input[val_start..end_idx].trim();
                 let mut clean_val = raw_val.to_string();
                 if ((clean_val.starts_with('"') && clean_val.ends_with('"'))
                     || (clean_val.starts_with('\'') && clean_val.ends_with('\'')))
@@ -546,6 +591,11 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                         kv_map.insert(key, json!(num));
                         continue;
                     }
+                }
+                if key == "args" {
+                    let tokens = parse_cli_tokens(&clean_val);
+                    kv_map.insert(key, Value::Array(tokens.into_iter().map(Value::String).collect()));
+                    continue;
                 }
                 kv_map.insert(key, Value::String(clean_val));
             }
@@ -583,13 +633,11 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                     kv_map.insert("path".to_string(), Value::String(".".to_string()));
                 }
                 if norm_name == "run_skill" {
-                    if let Some(args_val) = kv_map.get_mut("args") {
-                        if let Some(s) = args_val.as_str() {
-                            let parts: Vec<Value> = s.split_whitespace().map(|x| json!(x)).collect();
-                            *args_val = Value::Array(parts);
-                        }
-                    } else if !kv_map.contains_key("args") {
+                    if !kv_map.contains_key("args") {
                         kv_map.insert("args".to_string(), json!([]));
+                    }
+                    if !kv_map.contains_key("script") {
+                        kv_map.insert("script".to_string(), Value::String(String::new()));
                     }
                 }
                 return serde_json::to_string(&Value::Object(kv_map))
@@ -643,6 +691,35 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
 pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
     let mut calls = Vec::new();
 
+    // Format GLM / XML: <tool_call>name<arg_key>key</arg_key><arg_value>val</arg_value>...</tool_call>
+    if let Ok(glm_re) = Regex::new(r#"(?s)<tool_call>([a-zA-Z0-9_]+)(.*?)(?:</tool_call>|$)"#) {
+        for cap in glm_re.captures_iter(text) {
+            let fn_name = cap[1].trim().to_string();
+            let body = &cap[2];
+            let mut args = json!({});
+            if let Ok(kv_re) = Regex::new(
+                r#"(?s)<arg_key>([a-zA-Z0-9_]+)</arg_key>\s*<arg_value>(.*?)(?:</arg_value>|$)"#,
+            ) {
+                for kv in kv_re.captures_iter(body) {
+                    let k = kv[1].trim();
+                    let v = kv[2].trim();
+                    args[k] = Value::String(v.to_string());
+                }
+            }
+            if args.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
+                calls.push(ToolCallInfo {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: fn_name,
+                    arguments: args.to_string(),
+                });
+            }
+        }
+    }
+
+    if !calls.is_empty() {
+        return calls;
+    }
+
     // Format 00: Direct tool tags, e.g. <search_files>...</search_files>, <write_file>...</write_file>, etc.
     let direct_tools = [
         "read_file",
@@ -664,6 +741,9 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
         "arxiv",
         "fetch_page",
         "fetchpage",
+        "record_finding",
+        "record_contradiction",
+        "run_skill",
     ];
     let lower_text = text.to_lowercase();
     for &tool_tag in &direct_tools {
@@ -999,6 +1079,9 @@ pub fn strip_tool_tags(text: &str) -> String {
         "arxiv",
         "fetch_page",
         "fetchpage",
+        "record_finding",
+        "record_contradiction",
+        "run_skill",
         "tool_call",
         "function",
         "invoke",
@@ -1256,6 +1339,43 @@ pub fn build_tool_definitions() -> Vec<Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "record_finding",
+                "description": "Records an extracted technical fact, metric, CVE, or mechanism into the encrypted in-memory Research Board. Call this tool whenever you extract concrete data from search results, papers, or web pages to preserve it in working memory across deep research phases.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string", "description": "URL, DOI, or paper title of the source."},
+                        "claim": {"type": "string", "description": "Short core statement or finding (e.g. 'KyberSlash leaks secret via non-constant-time division in division/poly_tomsg')."},
+                        "details": {"type": "string", "description": "Concrete technical explanation, instructions involved (e.g. idiv, AVX2 vdivps), or metrics."},
+                        "caveats": {"type": "string", "description": "Optional limitations, nuances, or counter-claims."},
+                        "verified": {"type": "boolean", "description": "Whether this finding is verified by primary source evidence (default: true)."}
+                    },
+                    "required": ["source", "claim", "details"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "record_contradiction",
+                "description": "Records conflicting or opposing technical claims between two sources or viewpoints into the Research Board for deep comparative analysis.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "point": {"type": "string", "description": "Subject of contradiction (e.g. 'Constant-time verification guarantee in pure Rust with LLVM')."},
+                        "claim_a": {"type": "string", "description": "Claim from source A."},
+                        "source_a": {"type": "string", "description": "Source A name or URL."},
+                        "claim_b": {"type": "string", "description": "Opposing claim from source B."},
+                        "source_b": {"type": "string", "description": "Source B name or URL."},
+                        "analysis": {"type": "string", "description": "Technical evaluation or resolution of why the two differ."}
+                    },
+                    "required": ["point", "claim_a", "source_a", "claim_b", "source_b", "analysis"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "run_skill",
                 "description": skill_desc,
                 "parameters": {
@@ -1280,6 +1400,8 @@ pub async fn stream_completion(
     messages: &[ChatMessage],
     enable_tools: bool,
     forced_tool: Option<String>,
+    context_window_tokens: usize,
+    max_output_tokens: usize,
     tx: UnboundedSender<StreamUpdate>,
     cancel_token: CancellationToken,
 ) {
@@ -1391,7 +1513,7 @@ pub async fn stream_completion(
                     }
                     let asst_obj = json!({
                         "role": "assistant",
-                        "content": if trimmed.is_empty() { Value::Null } else { Value::String(trimmed.to_string()) },
+                        "content": if trimmed.is_empty() { Value::String(String::new()) } else { Value::String(trimmed.to_string()) },
                         "tool_calls": tc_objs
                     });
                     // DO NOT attach reasoning_content to past turns: it blows up context window and causes immediate EOS!
@@ -1460,10 +1582,11 @@ pub async fn stream_completion(
         }
         normalized_messages.push(msg);
     }
-    // Context Governor: protect against hitting llama.cpp / LM Studio hard context ceiling (n_ctx ~6582)
-    // Budget max ~12,000 characters backwards so prompt_tokens stays around ~4,000,
-    // leaving 2,500+ tokens of KV cache completely free for generation!
-    const BUDGET_CHARS: usize = 75000; // Scaled for loaded 32,768 context length
+    // Context Governor: dynamically scale backwards character budget based on configured context window
+    // Budget backwards: max prompt tokens = (context_window - max_output_tokens).max(1024)
+    // Approx 3.2 chars per token (conservative for Cyrillic and code)
+    let max_prompt_tokens = context_window_tokens.saturating_sub(max_output_tokens).max(1024);
+    let budget_chars = max_prompt_tokens.saturating_mul(3).max(4096);
     let mut governed_messages: Vec<Value> = Vec::new();
     let mut curr_chars = 0usize;
 
@@ -1479,7 +1602,7 @@ pub async fn stream_completion(
             0
         };
 
-        if curr_chars + c_len > BUDGET_CHARS && governed_messages.len() >= 3 {
+        if curr_chars + c_len > budget_chars && governed_messages.len() >= 3 {
             break;
         }
         curr_chars += c_len;
@@ -1500,16 +1623,6 @@ pub async fn stream_completion(
         }
     }
 
-    // If the conversation ends with tool execution results, guarantee a user synthesis directive
-    // so Qwen 2.5 / llama.cpp Jinja template never emits an immediate empty EOS response!
-    if let Some(last) = governed_messages.last() {
-        if last.get("role").and_then(|r| r.as_str()) == Some("tool") {
-            governed_messages.push(json!({
-                "role": "user",
-                "content": "[DIRECTIVE]: Tool execution completed. Review the gathered data above, synthesize the facts, and formulate your comprehensive answer now."
-            }));
-        }
-    }
 
     let payload_messages = governed_messages;
 
@@ -1518,7 +1631,7 @@ pub async fn stream_completion(
         "messages": payload_messages,
         "temperature": 0.3,
         "top_p": 0.9,
-        "max_tokens": 16384,
+        "max_tokens": max_output_tokens.max(256),
         "stream": true,
     });
 
@@ -1645,7 +1758,14 @@ pub async fn stream_completion(
     )));
 
     if !resp.status().is_success() {
-        let err_msg = format!("Server returned HTTP status: {}", resp.status());
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+        let trimmed_body = body_text.trim();
+        let err_msg = if !trimmed_body.is_empty() {
+            format!("HTTP {}: {}", status, trimmed_body)
+        } else {
+            format!("Server returned HTTP status: {}", status)
+        };
         let _ = tx.send(StreamUpdate::Log(format!("❌ [API Error] {}", err_msg)));
         let _ = tx.send(StreamUpdate::Error(err_msg));
         return;
@@ -1659,6 +1779,7 @@ pub async fn stream_completion(
     let mut last_finish_reason: Option<String> = None;
     let mut usage_info: Option<(u64, u64, u64)> = None;
     let mut chunk_count = 0usize;
+    let mut first_token_time: Option<u64> = None;
 
     while let Some(item) = byte_stream.next().await {
         if cancel_token.is_cancelled() {
@@ -1723,11 +1844,17 @@ pub async fn stream_completion(
                         .and_then(|c| c.get(0))
                         .and_then(|c| c.get("delta"))
                     {
-                        // 1. Direct reasoning_content field
-                        if let Some(reasoning) =
-                            delta.get("reasoning_content").and_then(|r| r.as_str())
-                        {
+                        // 1. Direct reasoning / reasoning_content field (OpenAI, DeepSeek, Z.ai, Aitunnel, OpenRouter)
+                        let reasoning_opt = delta
+                            .get("reasoning_content")
+                            .or_else(|| delta.get("reasoning"))
+                            .and_then(|r| r.as_str());
+
+                        if let Some(reasoning) = reasoning_opt {
                             if !reasoning.is_empty() {
+                                if first_token_time.is_none() {
+                                    first_token_time = Some(start_time.elapsed().as_millis() as u64);
+                                }
                                 chunk_count += 1;
                                 stream_parser.accumulated_thinking.push_str(reasoning);
                                 let _ = tx.send(StreamUpdate::Thinking(reasoning.to_string()));
@@ -1738,6 +1865,9 @@ pub async fn stream_completion(
                         if let Some(tool_calls) = delta.get("tool_calls").and_then(|t| t.as_array())
                         {
                             for tc in tool_calls {
+                                if first_token_time.is_none() {
+                                    first_token_time = Some(start_time.elapsed().as_millis() as u64);
+                                }
                                 chunk_count += 1;
                                 let idx =
                                     tc.get("index").and_then(|i| i.as_u64()).unwrap_or(0) as usize;
@@ -1764,6 +1894,9 @@ pub async fn stream_completion(
                         // 3. Content tokens processed through stream_parser (filters out <think> and tool tags from screen!)
                         if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
                             if !content.is_empty() {
+                                if first_token_time.is_none() {
+                                    first_token_time = Some(start_time.elapsed().as_millis() as u64);
+                                }
                                 chunk_count += 1;
                                 raw_full_output.push_str(content);
                                 let parsed_events = stream_parser.push_chunk(content);
@@ -1790,13 +1923,26 @@ pub async fn stream_completion(
 
     let elapsed = start_time.elapsed();
     let elapsed_ms = elapsed.as_millis();
-    let tps = if elapsed.as_secs_f64() > 0.05 && chunk_count > 0 {
-        chunk_count as f64 / elapsed.as_secs_f64()
+    let total_tokens_emitted = usage_info
+        .map(|(_, ct, _)| ct)
+        .filter(|&ct| ct > 0)
+        .unwrap_or(chunk_count as u64);
+
+    let tps = if elapsed.as_secs_f64() > 0.05 && total_tokens_emitted > 0 {
+        total_tokens_emitted as f64 / elapsed.as_secs_f64()
     } else {
         0.0
     };
 
     let finish_str = last_finish_reason.as_deref().unwrap_or("unknown");
+    let effective_ttft = first_token_time.unwrap_or(ttft_ms as u64);
+    let _ = tx.send(StreamUpdate::Telemetry {
+        ttft_ms: effective_ttft,
+        tps,
+        prompt_tokens: usage_info.map(|(p, _, _)| p),
+        completion_tokens: usage_info.map(|(_, c, _)| c),
+    });
+
     if let Some((pt, ct, tt)) = usage_info {
         let _ = tx.send(StreamUpdate::Log(format!(
             "🏁 [Stream Done] finish: \"{}\" | prompt: {} tok | completion: {} tok | total: {} tok | {}ms ({:.1} t/s)",
@@ -1905,5 +2051,19 @@ mod tests {
         let args = parsed.get("args").and_then(|v| v.as_array()).unwrap();
         assert_eq!(args.len(), 3);
         assert_eq!(args[0].as_str(), Some("photo.png"));
+    }
+
+    #[test]
+    fn test_reasoning_and_reasoning_content_delta_parsing() {
+        let chunk1: Value = serde_json::from_str(r#"{"choices":[{"index":0,"delta":{"reasoning":"Analyzing memory bus..."}}]}"#).unwrap();
+        let chunk2: Value = serde_json::from_str(r#"{"choices":[{"index":0,"delta":{"reasoning_content":"Checking NIST SP 800-90B..."}}]}"#).unwrap();
+
+        let delta1 = chunk1.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).unwrap();
+        let r1 = delta1.get("reasoning_content").or_else(|| delta1.get("reasoning")).and_then(|r| r.as_str());
+        assert_eq!(r1, Some("Analyzing memory bus..."));
+
+        let delta2 = chunk2.get("choices").and_then(|c| c.get(0)).and_then(|c| c.get("delta")).unwrap();
+        let r2 = delta2.get("reasoning_content").or_else(|| delta2.get("reasoning")).and_then(|r| r.as_str());
+        assert_eq!(r2, Some("Checking NIST SP 800-90B..."));
     }
 }
