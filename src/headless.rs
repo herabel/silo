@@ -411,16 +411,35 @@ pub async fn run_agent_session(
     }
     messages.push(ChatMessage::user(query));
 
-    let max_tool_steps = if is_deep { 25 } else { 6 };
-    let max_fetches = if is_deep { 10 } else { 2 };
+    let max_tool_steps = if is_deep { 12 } else { 6 };
+    let max_fetches = if is_deep { 6 } else { 2 };
     let mut fetch_count = 0;
     let mut step = 0;
 
-    while step < max_tool_steps {
+    while step <= max_tool_steps {
         step += 1;
+        let is_synthesis_phase = is_deep && (step >= max_tool_steps || fetch_count >= max_fetches);
+        let enable_tools = !is_synthesis_phase;
+
+        if is_synthesis_phase && !messages.iter().any(|m| m.content.contains("[SYNTHESIS MANDATE]")) {
+            println!(
+                "\n--- [Final Synthesis Phase] Research phase complete. Disabling tools and commanding exhaustive technical dossier... ---"
+            );
+            let evidence = crate::engine::get_global_evidence_dossier();
+            let mandate = if !evidence.is_empty() {
+                format!(
+                    "[SYNTHESIS MANDATE]: Research phase complete. Synthesize your exhaustive, publication-grade technical dossier with detailed architectural mechanics, code-level pitfalls, contradiction analysis, and full citations based on your evidence board:\n\n{}",
+                    evidence
+                )
+            } else {
+                "[SYNTHESIS MANDATE]: Research phase complete. Deliver your exhaustive, publication-grade final technical dossier with all required sections: Executive Summary, Theoretical Foundations, Root-Cause Vulnerability Mechanics, Compiler & Implementation Pitfalls (Rust vs C/ASM), Contradiction Analysis, Defenses & Verification Tools, and Citation Matrix.".to_string()
+            };
+            messages.push(ChatMessage::user(&mandate));
+        }
+
         println!(
-            "\n--- [Step {}/{}] Generating completion from model... ---",
-            step, max_tool_steps
+            "\n--- [Step {}/{}] Generating completion from model (tools: {})... ---",
+            step, max_tool_steps, enable_tools
         );
 
         let (tx, mut rx) = unbounded_channel();
@@ -429,8 +448,6 @@ pub async fn run_agent_session(
         let model_clone = model.clone();
         let sys_prompt_clone = system_prompt.clone();
         let msgs_clone = messages.clone();
-
-        let enable_tools = !(is_deep && fetch_count >= max_fetches);
 
         let forced_tool = if step == 1 {
             let lower_q = query.to_lowercase();
