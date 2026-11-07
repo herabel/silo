@@ -82,13 +82,38 @@ const FONT_INTER_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBol
 const FONT_JETBRAINS_MONO: &[u8] = include_bytes!("../assets/fonts/JetBrainsMono-Regular.ttf");
 
 const DEEP_RESEARCH_DIRECTIVE: &str = r#"DEEP RESEARCH DIRECTIVE:
-You are an investigative technical analyst. Follow a rigorous multi-phase research approach:
-1. IMMEDIATE TOOL DELEGATION: Never perform mental arithmetic, formula derivations, or parameter checks in <think>. Immediately offload all math, size calculations, and data processing to `execute_python`.
-2. Scout: For academic papers, preprints, and algorithmic proofs, invoke `arxiv_search(query)`. For documentation and live web articles, invoke `web_search(query)`. KEEP SEARCH QUERIES SHORT AND FOCUSED (3-6 keywords max, e.g. "FastCDC chunking dual mask" or "indirect prompt injection"). Never stuff multiple years or filler words into search queries.
-3. Read: Call `fetch_page(url)` on relevant URLs from search results to inspect source documents.
-4. Compute: Validate mathematical models or verify equations using `execute_python`.
-5. STRICT TOOL LOOP ENFORCEMENT: Never output conversational filler or unexecuted promises in chat (such as "Let me fetch...", "I will search...", "Now checking..."). Always invoke the tool call directly. Only output natural language markdown when synthesizing the final comprehensive dossier.
-6. Synthesize: Formulate an exhaustive, highly structured technical dossier with citations and data tables."#;
+You are an investigative technical analyst and systems engineer conducting exhaustive, deep technical investigations.
+Follow this mandatory 4-Phase Research Protocol:
+
+PHASE 1: SCOUT & QUERY EXPANSION (Steps 1-3)
+- Execute multiple targeted `web_search` and `arxiv_search` queries across orthogonal dimensions:
+  * Theoretical mechanics & mathematical formulations.
+  * Real-world vulnerabilities, CVEs, and proof-of-concepts (e.g. timing leaks, side-channels).
+  * Implementation-level pitfalls (e.g. LLVM compiler optimization destroying constant-time in pure Rust vs C vs ASM).
+  * Microarchitectural & hardware side-channels (e.g. vector register port contention, variable division instructions, frequency scaling).
+- Always use specific technical keywords (2-5 words). Avoid long conversational phrases in search queries.
+
+PHASE 2: DEEP INGESTION & EVIDENCE RECORDING (Steps 4-10)
+- Call `fetch_page(url)` on primary sources, official advisory sites, and papers.
+- As soon as concrete findings, CVEs, mechanisms, or numbers are discovered, record them into the encrypted Research Board using `record_finding(source, claim, details, caveats, verified)`.
+- Use `execute_python` to verify equations, timing differences, parameter calculations, or algorithmic steps.
+
+PHASE 3: ADVERSARIAL PROBING & CONTRADICTION ANALYSIS (Steps 11-16)
+- Actively search for contradictory perspectives, edge cases, and patch limitations:
+  * Does the patch completely eliminate side-channels, or do vector registers/subtle compiler flags reintroduce them?
+  * How do pure Rust crates (subtle, subtle-ng) interact with LLVM peephole optimizations vs handcrafted assembly?
+  * Record conflicting viewpoints using `record_contradiction(point, claim_a, source_a, claim_b, source_b, analysis)`.
+
+PHASE 4: EXHAUSTIVE SYNTHESIS (Final Step)
+- Synthesize an authoritative, publication-grade technical dossier structured as:
+  1. Executive Summary & Core Verdict
+  2. Theoretical & Mathematical Foundations
+  3. Root-Cause Vulnerability Mechanics (Instruction-level & algorithmic analysis)
+  4. Compiler & Implementation Pitfalls (Pure Rust vs C vs ASM, LLVM optimization risks)
+  5. Contradiction Analysis & Technical Debate Matrix
+  6. Defenses, Constant-Time Verification Tools & Hardening Recommendations
+  7. Verified Citation Matrix (DOIs, URLs, and source attribution).
+"#;
 
 const MAX_DEEP_FETCHES: usize = 8;
 
@@ -694,6 +719,10 @@ impl SiloApp {
         self.empty_recovery_count = 0;
         self.forced_tool = forced_tool;
 
+        if effective_deep {
+            crate::engine::init_global_research_board(&user_text);
+        }
+
         // Append user message (and directive if applicable)
         if let Some(sess) = self.active_session_mut() {
             if effective_deep {
@@ -1291,22 +1320,40 @@ impl SiloApp {
             tc.output = Some(effective_output.clone());
         }
 
+                if ok && (tool_name == "web_search" || tool_name == "arxiv_search" || tool_name == "search") {
+            crate::engine::auto_ingest_search_results(&output);
+        } else if ok && (tool_name == "fetch_page" || tool_name == "fetch") {
+            let raw_args = self.pending_tool_calls.iter().find(|t| t.id == tool_id).map(|t| t.arguments.as_str()).unwrap_or("");
+            crate::engine::auto_ingest_page_fetch(raw_args, &output);
+        }
+
+        let board_summary = if self.is_deep_active {
+            crate::engine::get_global_board_summary()
+        } else {
+            String::new()
+        };
+        let suffix = if !board_summary.is_empty() {
+            format!("\n\n{}", board_summary)
+        } else {
+            String::new()
+        };
+
         let instruction = if tool_name == "arxiv_search" || tool_name == "arxiv" {
             if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
-                format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.", effective_output, MAX_DEEP_FETCHES - self.deep_fetch_count)
+                format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.{}", effective_output, MAX_DEEP_FETCHES - self.deep_fetch_count, suffix)
             } else {
                 format!(
-                    "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
-                    effective_output
+                    "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}",
+                    effective_output, suffix
                 )
             }
         } else if tool_name == "web_search" || tool_name == "search" {
             if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
-                format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", effective_output, MAX_DEEP_FETCHES - self.deep_fetch_count)
+                format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select key URLs and call `fetch_page(url)` to read primary documents. Search for opposing views or patch analyses. You have {} page reads remaining.{}", effective_output, MAX_DEEP_FETCHES - self.deep_fetch_count, suffix)
             } else {
                 format!(
-                    "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.",
-                    effective_output
+                    "Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}",
+                    effective_output, suffix
                 )
             }
         } else if tool_name == "fetch_page" || tool_name == "fetch" {
@@ -1314,7 +1361,13 @@ impl SiloApp {
             if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
                 format!("Page Markdown:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Source read [{}/{}]. If additional pages or searches are needed to complete the research, proceed. If sufficient evidence has been gathered, produce the final comprehensive dossier.", effective_output, self.deep_fetch_count, MAX_DEEP_FETCHES)
             } else if self.is_deep_active {
-                format!("Page Markdown:\n{}\n\n[DEEP RESEARCH COMPLETED]: Maximum research quota reached ({}/{}). All necessary empirical evidence has been gathered. Do NOT call any more tools and do NOT announce future searches. Synthesize and write the exhaustive, definitive final technical research dossier now, complete with findings, comparisons, exact metrics, and strategic conclusions.", effective_output, self.deep_fetch_count, MAX_DEEP_FETCHES)
+                let evidence = crate::engine::get_global_evidence_dossier();
+                let evidence_block = if !evidence.is_empty() {
+                    format!("\n\n[RESEARCH BOARD DOSSIER]:\n{}", evidence)
+                } else {
+                    String::new()
+                };
+                format!("Page Markdown:\n{}\n\n[DEEP RESEARCH COMPLETED]: Maximum research quota reached ({}/{}). All necessary empirical evidence has been gathered into memory. Do NOT call any more tools and do NOT announce future searches. Synthesize and write the exhaustive, definitive final technical research dossier now, complete with findings, comparisons, exact metrics, and strategic conclusions.{}{}", effective_output, self.deep_fetch_count, MAX_DEEP_FETCHES, suffix, evidence_block)
             } else {
                 format!("Page Markdown:\n{}\n\n[INSTRUCTION]: Now synthesize your final comprehensive dossier.", effective_output)
             }
