@@ -712,6 +712,9 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
         "arxiv",
         "fetch_page",
         "fetchpage",
+        "record_finding",
+        "record_contradiction",
+        "run_skill",
     ];
     let lower_text = text.to_lowercase();
     for &tool_tag in &direct_tools {
@@ -1047,6 +1050,9 @@ pub fn strip_tool_tags(text: &str) -> String {
         "arxiv",
         "fetch_page",
         "fetchpage",
+        "record_finding",
+        "record_contradiction",
+        "run_skill",
         "tool_call",
         "function",
         "invoke",
@@ -1298,6 +1304,43 @@ pub fn build_tool_definitions() -> Vec<Value> {
                         "path": {"type": "string", "description": "Directory or file path to search in (default: '.')"}
                     },
                     "required": ["pattern"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "record_finding",
+                "description": "Records an extracted technical fact, metric, CVE, or mechanism into the encrypted in-memory Research Board. Call this tool whenever you extract concrete data from search results, papers, or web pages to preserve it in working memory across deep research phases.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source": {"type": "string", "description": "URL, DOI, or paper title of the source."},
+                        "claim": {"type": "string", "description": "Short core statement or finding (e.g. 'KyberSlash leaks secret via non-constant-time division in division/poly_tomsg')."},
+                        "details": {"type": "string", "description": "Concrete technical explanation, instructions involved (e.g. idiv, AVX2 vdivps), or metrics."},
+                        "caveats": {"type": "string", "description": "Optional limitations, nuances, or counter-claims."},
+                        "verified": {"type": "boolean", "description": "Whether this finding is verified by primary source evidence (default: true)."}
+                    },
+                    "required": ["source", "claim", "details"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "record_contradiction",
+                "description": "Records conflicting or opposing technical claims between two sources or viewpoints into the Research Board for deep comparative analysis.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "point": {"type": "string", "description": "Subject of contradiction (e.g. 'Constant-time verification guarantee in pure Rust with LLVM')."},
+                        "claim_a": {"type": "string", "description": "Claim from source A."},
+                        "source_a": {"type": "string", "description": "Source A name or URL."},
+                        "claim_b": {"type": "string", "description": "Opposing claim from source B."},
+                        "source_b": {"type": "string", "description": "Source B name or URL."},
+                        "analysis": {"type": "string", "description": "Technical evaluation or resolution of why the two differ."}
+                    },
+                    "required": ["point", "claim_a", "source_a", "claim_b", "source_b", "analysis"]
                 }
             }
         }),

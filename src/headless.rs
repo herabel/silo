@@ -7,13 +7,38 @@ use tokio::sync::mpsc::unbounded_channel;
 use tokio_util::sync::CancellationToken;
 
 const DEEP_RESEARCH_DIRECTIVE: &str = r#"DEEP RESEARCH DIRECTIVE:
-You are an investigative technical analyst. Follow a rigorous multi-phase research approach:
-1. IMMEDIATE TOOL DELEGATION: Never perform mental arithmetic, formula derivations, or parameter checks in <think>. Immediately offload all math, size calculations, and data processing to `execute_python`.
-2. Scout: Run multiple `web_search` queries covering technical specifications, standards, and data.
-3. Read: Call `fetch_page(url)` on relevant URLs from search results to inspect source documents.
-4. Compute: Validate mathematical models or verify equations using `execute_python`.
-5. STRICT TOOL LOOP ENFORCEMENT: Never output conversational filler or unexecuted promises in chat (such as "Let me fetch...", "I will search...", "Now checking..."). Always invoke the tool call directly. Only output natural language markdown when synthesizing the final comprehensive dossier.
-6. Synthesize: Formulate an exhaustive, highly structured technical dossier with citations and data tables."#;
+You are an investigative technical analyst and systems engineer conducting exhaustive, deep technical investigations.
+Follow this mandatory 4-Phase Research Protocol:
+
+PHASE 1: SCOUT & QUERY EXPANSION (Steps 1-3)
+- Execute multiple targeted `web_search` and `arxiv_search` queries across orthogonal dimensions:
+  * Theoretical mechanics & mathematical formulations.
+  * Real-world vulnerabilities, CVEs, and proof-of-concepts (e.g. KyberSlash1/2, timing leaks in division/poly_tomsg).
+  * Implementation-level pitfalls (e.g. LLVM compiler optimization destroying constant-time in pure Rust vs C vs ASM).
+  * Microarchitectural & hardware side-channels (e.g. AVX2 NTT vector register port contention, variable-time division instructions, frequency scaling).
+- Always use specific technical keywords (2-5 words). Avoid long conversational phrases in search queries.
+
+PHASE 2: DEEP INGESTION & EVIDENCE RECORDING (Steps 4-10)
+- Call `fetch_page(url)` on primary sources, official advisory sites, and papers.
+- As soon as concrete findings, CVEs, mechanisms, or numbers are discovered, record them into the encrypted Research Board using `record_finding(source, claim, details, caveats, verified)`.
+- Use `execute_python` to verify equations, timing differences, parameter calculations, or algorithmic steps.
+
+PHASE 3: ADVERSARIAL PROBING & CONTRADICTION ANALYSIS (Steps 11-16)
+- Actively search for contradictory perspectives, edge cases, and patch limitations:
+  * Does fixing division time completely eliminate side-channels, or do vector registers/subtle compiler flags reintroduce them?
+  * How do pure Rust crates (subtle, subtle-ng) interact with LLVM peephole optimizations vs handcrafted assembly?
+  * Record conflicting viewpoints using `record_contradiction(point, claim_a, source_a, claim_b, source_b, analysis)`.
+
+PHASE 4: EXHAUSTIVE SYNTHESIS (Final Step)
+- Synthesize an authoritative, publication-grade technical dossier structured as:
+  1. Executive Summary & Core Verdict
+  2. Theoretical & Mathematical Foundations
+  3. Root-Cause Vulnerability Mechanics (Instruction-level & algorithmic analysis)
+  4. Compiler & Implementation Pitfalls (Pure Rust vs C vs ASM, LLVM optimization risks)
+  5. Contradiction Analysis & Technical Debate Matrix
+  6. Defenses, Constant-Time Verification Tools & Hardening Recommendations
+  7. Verified Citation Matrix (DOIs, URLs, and source attribution).
+"#;
 
 pub async fn run_headless(args: Vec<String>) {
     let mut prompt_arg: Option<String> = None;
@@ -96,33 +121,47 @@ fn format_headless_tool_instruction(
     fetch_count: &mut usize,
     max_fetches: usize,
 ) -> String {
+    let board_summary = if is_deep {
+        crate::engine::get_global_board_summary()
+    } else {
+        String::new()
+    };
+
+    let suffix = if !board_summary.is_empty() {
+        format!("\n\n{}", board_summary)
+    } else {
+        String::new()
+    };
+
     if tool_name == "arxiv_search" || tool_name == "arxiv" {
         if is_deep && *fetch_count < max_fetches {
-            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified arXiv abstracts retrieved. Extract methodology, findings, and metrics. If you need to verify math or compute formulas, call `execute_python`. If you need industry telemetry or blog sources, call `web_search` or `fetch_page`. You have {} research steps remaining.", out, max_fetches - *fetch_count)
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified technical papers retrieved. Extract concrete mechanisms, CVEs, or numbers and call `record_finding` to save them into working memory. If you need to verify math, call `execute_python`. If you need industry advisories, call `web_search` or `fetch_page`. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
         } else {
-            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.", out)
+            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}", out, suffix)
         }
     } else if tool_name == "web_search" || tool_name == "search" {
         if is_deep && *fetch_count < max_fetches {
-            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select the most authoritative URLs and call `fetch_page(url)` to read their full content. You have {} page reads remaining.", out, max_fetches - *fetch_count)
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select key URLs and call `fetch_page(url)` to read primary documents, or call `record_finding` to store facts into the research board. Search for opposing views or patch analyses to uncover contradictions. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
         } else {
-            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.", out)
+            format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}", out, suffix)
         }
     } else if tool_name == "fetch_page" || tool_name == "fetch" {
         *fetch_count += 1;
         if is_deep && *fetch_count < max_fetches {
-            format!("Page Markdown:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Source read [{}/{}]. If additional pages or searches are needed to complete the research, proceed. If sufficient evidence has been gathered, produce the final comprehensive dossier.", out, *fetch_count, max_fetches)
+            format!("Page Markdown:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Source read [{}/{}]. Extract specific CVEs, instruction sequences, or benchmarks into the research board using `record_finding`. If conflicting data exists, call `record_contradiction`. Proceed to next source or contradiction probe.{}", out, *fetch_count, max_fetches, suffix)
         } else {
-            format!("Page Markdown:\n{}\n\n[INSTRUCTION]: Now synthesize your final comprehensive dossier.", out)
+            format!("Page Markdown:\n{}\n\n[INSTRUCTION]: Source read [{}/{}]. Now synthesize your final comprehensive dossier using the accumulated research board.{}", out, *fetch_count, max_fetches, suffix)
         }
+    } else if tool_name == "record_finding" || tool_name == "finding" || tool_name == "record_contradiction" || tool_name == "contradiction" {
+        format!("Research Board Update:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Working memory updated. Continue investigating remaining subtopics, probe for contradictions, or synthesize the final dossier if all key areas are verified.", out)
     } else if tool_name == "execute_python" || tool_name == "python" {
         if is_deep {
-            format!("Python Execution Result:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Computation complete. Incorporate these exact numbers into your analysis. If additional searches or pages are needed, proceed; otherwise, synthesize your comprehensive dossier.", out)
+            format!("Python Execution Result:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Computation complete. Record verified numbers via `record_finding` or incorporate them into your analysis.{}", out, suffix)
         } else {
             format!("Python Execution Result:\n{}\n\n[INSTRUCTION]: Use this exact numerical result to formulate your final response to the user.", out)
         }
     } else {
-        format!("Command Execution Result:\n{}\n\n[INSTRUCTION]: Inspect stdout/stderr. Proceed with the task.", out)
+        format!("Command Execution Result:\n{}\n\n[INSTRUCTION]: Inspect stdout/stderr. Proceed with the task.{}", out, suffix)
     }
 }
 
@@ -367,6 +406,7 @@ pub async fn run_agent_session(
     let system_prompt = build_system_prompt();
 
     if is_deep {
+        crate::engine::init_global_research_board(query);
         messages.push(ChatMessage::system(DEEP_RESEARCH_DIRECTIVE));
     }
     messages.push(ChatMessage::user(query));
@@ -545,6 +585,13 @@ pub async fn run_agent_session(
                 break;
             }
 
+            if is_deep {
+                let evidence = crate::engine::get_global_evidence_dossier();
+                if !evidence.is_empty() && !messages.iter().any(|m| m.content.contains("# Research Evidence Board:")) {
+                    println!("\n[Evidence Board Ingestion]: Injecting {} chars of accumulated research board into final synthesis turn...", evidence.len());
+                    messages.push(ChatMessage::system(&format!("[SYNTHESIS INSTRUCTION]: You have gathered the following structured evidence in your encrypted research board. Synthesize your exhaustive final dossier based on these verified facts and contradictions:\n\n{}", evidence)));
+                }
+            }
             messages.push(ChatMessage::assistant(&content, thinking));
             println!("\n=== Final Response Completed ===");
             break;
