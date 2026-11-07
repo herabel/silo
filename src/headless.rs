@@ -589,6 +589,21 @@ pub async fn run_agent_session(
                 continue;
             }
 
+            let is_synthesis_deferral = is_synthesis_phase
+                && content.len() < 600
+                && (content.contains("need more granular")
+                    || content.contains("Executing targeted queries")
+                    || content.contains("I will execute")
+                    || content.contains("Board is empty")
+                    || content.contains("Current Status"));
+
+            if is_synthesis_deferral && step <= max_tool_steps + 1 {
+                println!("\n[Synthesis Enforcement]: Model deferred dossier writing. Enforcing immediate synthesis turn...");
+                messages.push(ChatMessage::assistant(&content, thinking));
+                messages.push(ChatMessage::user("[SYNTHESIS MANDATE]: Tools are now concluded. You have sufficient evidence accumulated in your research board and prompt history above. Synthesize the complete, exhaustive publication-grade technical dossier right now. Do not defer or output transitional filler. Output the full technical report."));
+                continue;
+            }
+
             if content.trim().is_empty() {
                 if let Some(th) = &thinking {
                     if !th.trim().is_empty() {
@@ -674,17 +689,22 @@ pub async fn run_agent_session(
                     let id = tc.id.clone();
                     handles.push(tokio::spawn(async move {
                         let (ok, out) = execute_tool(&name, &args).await;
-                        (id, name, ok, out)
+                        (id, name, args, ok, out)
                     }));
                 }
                 for handle in handles {
-                    if let Ok((id, name, ok, out)) = handle.await {
+                    if let Ok((id, name, args, ok, out)) = handle.await {
                         println!(
                             "Tool [{}] -> {}: ({} chars output)",
                             name,
                             if ok { "SUCCESS" } else { "FAILED" },
                             out.len()
                         );
+                        if ok && (name == "web_search" || name == "arxiv_search" || name == "search") {
+                            crate::engine::auto_ingest_search_results(&out);
+                        } else if ok && (name == "fetch_page" || name == "fetch") {
+                            crate::engine::auto_ingest_page_fetch(&args, &out);
+                        }
                         let instruction = format_headless_tool_instruction(
                             &name,
                             &out,
@@ -705,7 +725,12 @@ pub async fn run_agent_session(
                     if ok { "SUCCESS" } else { "FAILED" },
                     out.len()
                 );
-                let instruction = format_headless_tool_instruction(
+                                if ok && (tc.name == "web_search" || tc.name == "arxiv_search" || tc.name == "search") {
+                    crate::engine::auto_ingest_search_results(&out);
+                } else if ok && (tc.name == "fetch_page" || tc.name == "fetch") {
+                    crate::engine::auto_ingest_page_fetch(&tc.arguments, &out);
+                }
+let instruction = format_headless_tool_instruction(
                     &tc.name,
                     &out,
                     is_deep,

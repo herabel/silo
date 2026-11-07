@@ -306,3 +306,69 @@ mod tests {
         assert_eq!(restored.findings[0].claim, "KyberSlash timing attack");
     }
 }
+
+
+pub fn auto_ingest_search_results(raw_out: &str) {
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(raw_out) {
+        if let Some(arr) = val.as_array() {
+            for item in arr.iter().take(3) {
+                let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
+                let url = item.get("url").and_then(|u| u.as_str()).unwrap_or("");
+                let snippet = item.get("snippet").and_then(|s| s.as_str()).unwrap_or("");
+                if !title.is_empty() && (!snippet.is_empty() || !url.is_empty()) {
+                    let _ = record_finding_to_global_board(
+                        url,
+                        title,
+                        snippet,
+                        None,
+                        true,
+                    );
+                }
+            }
+        }
+    } else if raw_out.contains("### [") {
+        if let Ok(title_re) = regex::Regex::new(r"### \[\d+\] (.*?)\n") {
+            let url_re = regex::Regex::new(r"- \*\*URL:\*\* (.*?)\n").ok();
+            let abs_re = regex::Regex::new(r"(?s)- \*\*Abstract:\*\*\n(.*?)(?:\n---|\n###|$)").ok();
+
+            for cap in title_re.captures_iter(raw_out) {
+                let title = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
+                let url = url_re
+                    .as_ref()
+                    .and_then(|r| r.captures(raw_out))
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str().trim())
+                    .unwrap_or("arXiv");
+                let summary = abs_re
+                    .as_ref()
+                    .and_then(|r| r.captures(raw_out))
+                    .and_then(|c| c.get(1))
+                    .map(|m| m.as_str().trim())
+                    .unwrap_or("");
+                if !title.is_empty() {
+                    let _ = record_finding_to_global_board(
+                        url,
+                        title,
+                        summary,
+                        None,
+                        true,
+                    );
+                }
+            }
+        }
+    }
+}
+
+pub fn auto_ingest_page_fetch(args_str: &str, page_content: &str) {
+    let url = crate::engine::tools::extract_url_arg(args_str);
+    let sample: String = page_content.chars().take(800).collect();
+    if !sample.trim().is_empty() {
+        let _ = record_finding_to_global_board(
+            &url,
+            "Primary Source Document Read",
+            &sample,
+            None,
+            true,
+        );
+    }
+}
