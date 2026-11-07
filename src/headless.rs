@@ -575,14 +575,32 @@ pub async fn run_agent_session(
             if content.trim().is_empty() {
                 if let Some(th) = &thinking {
                     if !th.trim().is_empty() {
-                        println!(
-                            "\n[Notice]: Model completed thinking without emitting markdown text."
-                        );
-                        messages.push(ChatMessage::assistant("*(Completed reasoning)*", thinking));
-                        break;
+                        let th_calls = crate::engine::extract_text_tool_calls(th);
+                        if !th_calls.is_empty() {
+                            println!(
+                                "\n[Stream Rescue]: Extracted {} tool call(s) from reasoning block.",
+                                th_calls.len()
+                            );
+                            tool_calls = th_calls;
+                        } else if is_deep && step < max_tool_steps {
+                            println!(
+                                "\n[Agentic Nudge]: Model concluded reasoning without emitting text. Nudging for final synthesis..."
+                            );
+                            messages.push(ChatMessage::assistant("*(Completed reasoning)*", thinking.clone()));
+                            let evidence = crate::engine::get_global_evidence_dossier();
+                            let prompt = if !evidence.is_empty() {
+                                format!("[DEEP RESEARCH INSTRUCTION]: You completed your investigation. Now synthesize your exhaustive publication-grade technical dossier with full technical depth and citations, incorporating your evidence board:\n\n{}", evidence)
+                            } else {
+                                "[DEEP RESEARCH INSTRUCTION]: You completed your internal reasoning. Now deliver your exhaustive publication-grade final technical dossier with all sections, theoretical mechanics, compiler pitfalls, contradiction analysis, and verified sources.".to_string()
+                            };
+                            messages.push(ChatMessage::user(&prompt));
+                            continue;
+                        }
                     }
                 }
-                break;
+                if tool_calls.is_empty() {
+                    break;
+                }
             }
 
             if is_deep {

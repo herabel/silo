@@ -691,6 +691,35 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
 pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
     let mut calls = Vec::new();
 
+    // Format GLM / XML: <tool_call>name<arg_key>key</arg_key><arg_value>val</arg_value>...</tool_call>
+    if let Ok(glm_re) = Regex::new(r#"(?s)<tool_call>([a-zA-Z0-9_]+)(.*?)(?:</tool_call>|$)"#) {
+        for cap in glm_re.captures_iter(text) {
+            let fn_name = cap[1].trim().to_string();
+            let body = &cap[2];
+            let mut args = json!({});
+            if let Ok(kv_re) = Regex::new(
+                r#"(?s)<arg_key>([a-zA-Z0-9_]+)</arg_key>\s*<arg_value>(.*?)(?:</arg_value>|$)"#,
+            ) {
+                for kv in kv_re.captures_iter(body) {
+                    let k = kv[1].trim();
+                    let v = kv[2].trim();
+                    args[k] = Value::String(v.to_string());
+                }
+            }
+            if args.as_object().map(|o| !o.is_empty()).unwrap_or(false) {
+                calls.push(ToolCallInfo {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    name: fn_name,
+                    arguments: args.to_string(),
+                });
+            }
+        }
+    }
+
+    if !calls.is_empty() {
+        return calls;
+    }
+
     // Format 00: Direct tool tags, e.g. <search_files>...</search_files>, <write_file>...</write_file>, etc.
     let direct_tools = [
         "read_file",

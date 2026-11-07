@@ -1438,6 +1438,21 @@ pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
         }
     }
 
+    // 3b. Try specific technical domain anchor on OpenAlex (e.g. "KyberSlash", "Hertzbleed")
+    let q_words: Vec<&str> = query.split_whitespace().collect();
+    if q_words.len() > 1 {
+        for w in &q_words {
+            let clean_w = w.trim_matches(|c: char| !c.is_alphanumeric() && c != '-' && c != '_');
+            if clean_w.len() >= 7 && !clean_w.eq_ignore_ascii_case("attack") && !clean_w.eq_ignore_ascii_case("timing") && !clean_w.eq_ignore_ascii_case("vulnerability") {
+                if let Ok(out_anchor) = native_openalex_search(clean_w, limit).await {
+                    if out_anchor.starts_with('[') && out_anchor.len() > 2 {
+                        return (true, out_anchor);
+                    }
+                }
+            }
+        }
+    }
+
     // 4. CrossRef Academic Metadata Fallback
     if let Ok(out_cross) = native_crossref_search(&query, limit).await {
         if out_cross.starts_with('[') && out_cross.len() > 2 {
