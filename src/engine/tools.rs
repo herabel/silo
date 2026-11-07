@@ -1,5 +1,39 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+static DDG_LAST_FAILURE: AtomicI64 = AtomicI64::new(0);
+static DDG_BACKOFF_SECS: AtomicU32 = AtomicU32::new(30);
+
+pub fn is_ddg_available() -> bool {
+    let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(_) => return true,
+    };
+    let last_fail = DDG_LAST_FAILURE.load(Ordering::Relaxed);
+    if last_fail == 0 {
+        return true;
+    }
+    let backoff = DDG_BACKOFF_SECS.load(Ordering::Relaxed) as i64;
+    now.saturating_sub(last_fail) >= backoff
+}
+
+pub fn record_ddg_failure() {
+    let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_secs() as i64,
+        Err(_) => 0,
+    };
+    DDG_LAST_FAILURE.store(now, Ordering::Relaxed);
+    let cur = DDG_BACKOFF_SECS.load(Ordering::Relaxed);
+    let next = (cur * 2).clamp(30, 180);
+    DDG_BACKOFF_SECS.store(next, Ordering::Relaxed);
+}
+
+pub fn record_ddg_success() {
+    DDG_LAST_FAILURE.store(0, Ordering::Relaxed);
+    DDG_BACKOFF_SECS.store(30, Ordering::Relaxed);
+}
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -457,7 +491,8 @@ fn percent_decode(s: &str) -> String {
 async fn native_ddg_html_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-        .timeout(Duration::from_secs(8))
+        .connect_timeout(Duration::from_millis(800))
+        .timeout(Duration::from_secs(4))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
@@ -550,7 +585,8 @@ async fn native_ddg_html_search(query: &str, limit: usize) -> Result<String, Str
 async fn native_ddg_lite_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-        .timeout(Duration::from_secs(7))
+        .connect_timeout(Duration::from_millis(800))
+        .timeout(Duration::from_secs(4))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
@@ -763,7 +799,8 @@ async fn native_wikipedia_search(query: &str, limit: usize) -> Result<String, St
 async fn native_openalex_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Silo-ResearchAgent/1.0 (Desktop AI Workbench; mailto:artem@silo.local)")
-        .timeout(Duration::from_secs(8))
+        .connect_timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_secs(6))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
@@ -863,7 +900,8 @@ async fn native_openalex_search(query: &str, limit: usize) -> Result<String, Str
 async fn native_crossref_search(query: &str, limit: usize) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Silo-ResearchAgent/1.0 (Desktop AI Workbench; mailto:artem@silo.local)")
-        .timeout(Duration::from_secs(7))
+        .connect_timeout(Duration::from_millis(1500))
+        .timeout(Duration::from_secs(5))
         .build()
         .map_err(|e| format!("Client error: {}", e))?;
 
@@ -1395,36 +1433,32 @@ pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
         return (false, "Search query is empty.".to_string());
     }
 
-    // 1. Native Rust DuckDuckGo HTML GET Search
-    if let Ok(out) = native_ddg_html_search(&query, limit).await {
-        if out.starts_with('[') && out.len() > 2 {
-            return (true, out);
-        }
-    }
-
-    // 2. DuckDuckGo Lite Fallback
-    if let Ok(out_lite) = native_ddg_lite_search(&query, limit).await {
-        if out_lite.starts_with('[') && out_lite.len() > 2 {
-            return (true, out_lite);
-        }
-    }
-
-    // 2b. Retry with keyword-simplified query on DDG
     let simplified = simplify_query_keywords(&query);
-    if !simplified.is_empty() && simplified != query {
-        if let Ok(out_simp) = native_ddg_html_search(&simplified, limit).await {
-            if out_simp.starts_with('[') && out_simp.len() > 2 {
-                return (true, out_simp);
+
+    // 1. DuckDuckGo with fast failover (800ms connect timeout + circuit breaker)
+    if is_ddg_available() {
+        match native_ddg_html_search(&query, limit).await {
+            Ok(out) if out.starts_with('[') && out.len() > 2 => {
+                record_ddg_success();
+                return (true, out);
             }
-        }
-        if let Ok(out_lite_simp) = native_ddg_lite_search(&simplified, limit).await {
-            if out_lite_simp.starts_with('[') && out_lite_simp.len() > 2 {
-                return (true, out_lite_simp);
+            Err(e) if e.contains("timed out") || e.contains("connect") || e.contains("error") => {
+                // Network/timeout failure: host is unreachable or blocking TCP SYN.
+                // Trip circuit breaker and bypass all other DDG attempts immediately!
+                record_ddg_failure();
+            }
+            _ => {
+                if let Ok(out_lite) = native_ddg_lite_search(&query, limit).await {
+                    if out_lite.starts_with('[') && out_lite.len() > 2 {
+                        record_ddg_success();
+                        return (true, out_lite);
+                    }
+                }
             }
         }
     }
 
-    // 3. Academic & Technical Literature Fallback (OpenAlex - 250M+ peer-reviewed papers & preprints)
+    // 2. Academic & Technical Literature (OpenAlex: 250M+ peer-reviewed papers & preprints - ~600-1000ms)
     if let Ok(out_alex) = native_openalex_search(&query, limit).await {
         if out_alex.starts_with('[') && out_alex.len() > 2 {
             return (true, out_alex);
@@ -1438,7 +1472,7 @@ pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
         }
     }
 
-    // 3b. Try specific technical domain anchor on OpenAlex (e.g. "KyberSlash", "Hertzbleed")
+    // 2b. Specific technical domain anchor on OpenAlex
     let q_words: Vec<&str> = query.split_whitespace().collect();
     if q_words.len() > 1 {
         for w in &q_words {
@@ -1453,46 +1487,50 @@ pub async fn run_web_search(raw_query: &str, limit: usize) -> (bool, String) {
         }
     }
 
-    // 4. CrossRef Academic Metadata Fallback
+    // 3. CrossRef Academic Metadata Fallback (~600ms)
     if let Ok(out_cross) = native_crossref_search(&query, limit).await {
         if out_cross.starts_with('[') && out_cross.len() > 2 {
             return (true, out_cross);
         }
     }
 
-    // 5. DuckDuckGo Instant Answer API Fallback
-    if let Ok(out_instant) = native_ddg_instant_search(&query, limit).await {
-        if out_instant.starts_with('[') && out_instant.len() > 2 {
-            return (true, out_instant);
-        }
-    }
-
-    // 6. Wikipedia Search API Fallback (language-aware ru/en)
+    // 4. Wikipedia Search API Fallback (ru/en - ~500ms)
     if let Ok(out_wiki) = native_wikipedia_search(&query, limit).await {
         if out_wiki.starts_with('[') && out_wiki.len() > 2 {
             return (true, out_wiki);
         }
     }
 
-    // 7. Fallback to web_scout search if binary is available locally
-    if let Some(bin) = find_web_scout_bin() {
-        let mut cmd = Command::new(bin);
-        cmd.arg("search").arg(&query).arg(limit.to_string());
-        #[cfg(windows)]
-        {
-            cmd.creation_flags(0x08000000);
+    // 5. DuckDuckGo Instant Answer API Fallback (only if DDG is unblocked)
+    if is_ddg_available() {
+        if let Ok(out_instant) = native_ddg_instant_search(&query, limit).await {
+            if out_instant.starts_with('[') && out_instant.len() > 2 {
+                return (true, out_instant);
+            }
         }
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    }
 
-        if let Ok(mut child) = cmd.spawn() {
-            if let Ok(Ok(status)) = timeout(Duration::from_secs(12), child.wait()).await {
-                let mut buf = Vec::new();
-                if let Some(mut out) = child.stdout.take() {
-                    let _ = out.read_to_end(&mut buf).await;
-                }
-                let content = String::from_utf8_lossy(&buf).trim().to_string();
-                if status.success() && content.starts_with('[') && content.len() > 2 {
-                    return (true, content);
+    // 6. Local web_scout fallback if present and DDG is available
+    if is_ddg_available() {
+        if let Some(bin) = find_web_scout_bin() {
+            let mut cmd = Command::new(bin);
+            cmd.arg("search").arg(&query).arg(limit.to_string());
+            #[cfg(windows)]
+            {
+                cmd.creation_flags(0x08000000);
+            }
+            cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+
+            if let Ok(mut child) = cmd.spawn() {
+                if let Ok(Ok(status)) = timeout(Duration::from_secs(4), child.wait()).await {
+                    let mut buf = Vec::new();
+                    if let Some(mut out) = child.stdout.take() {
+                        let _ = out.read_to_end(&mut buf).await;
+                    }
+                    let content = String::from_utf8_lossy(&buf).trim().to_string();
+                    if status.success() && content.starts_with('[') && content.len() > 2 {
+                        return (true, content);
+                    }
                 }
             }
         }
