@@ -626,7 +626,7 @@ pub fn render_message_content(ui: &mut egui::Ui, text: &str) -> Option<(String, 
                                             |ui| {
                                                 let btn = ui.add(
                                                     egui::Button::new(
-                                                        RichText::new("📋 Copy")
+                                                        RichText::new("Copy")
                                                             .monospace()
                                                             .color(Color32::from_rgb(180, 200, 230))
                                                             .size(11.0),
@@ -810,25 +810,25 @@ pub fn render_welcome_hero(
 
         let cards = [
             (
-                "🔬 Deep Technical Research",
+                "Deep Technical Research",
                 "/deep Analyze state-of-the-art zero-copy IPC primitives in modern kernels vs DPDK",
                 "Autonomous multi-step investigation using DuckDuckGo search + web_scout markdown extraction.",
                 Color32::from_rgb(99, 102, 241),
             ),
             (
-                "⚡ Python Verification Sandbox",
+                "Python Verification Sandbox",
                 "/calc verify entropy bounds and NIST SP 800-22 test distribution for 100k samples",
                 "Execute local Python computation scripts to verify algorithms, math, and benchmarks.",
                 Color32::from_rgb(16, 185, 129),
             ),
             (
-                "💻 Host Shell Diagnostic",
+                "Host Shell Diagnostic",
                 "/run cargo test --release -- --nocapture",
                 "Execute isolated shell commands, compile binaries, and inspect hardware diagnostics.",
                 Color32::from_rgb(245, 158, 11),
             ),
             (
-                "🛡 Security Rules Audit",
+                "Security Rules Audit",
                 "Audit eBPF execve probe and streaming BLAKE3 hashing pipeline against suspicious binaries",
                 "Architectural analysis with zero corporate fluff and strict systems boundaries.",
                 Color32::from_rgb(239, 68, 68),

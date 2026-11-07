@@ -281,10 +281,24 @@ pub struct ContextConfig {
     pub custom_system_prompt: String,
     #[serde(default)]
     pub custom_prompt_mode: CustomPromptMode,
+
+    #[serde(default = "default_context_window")]
+    pub context_window_tokens: usize,
+
+    #[serde(default = "default_max_output_tokens")]
+    pub max_output_tokens: usize,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_context_window() -> usize {
+    32768
+}
+
+fn default_max_output_tokens() -> usize {
+    8192
 }
 
 impl Default for ContextConfig {
@@ -302,6 +316,8 @@ impl Default for ContextConfig {
             mask_tool_outputs: true,
             custom_system_prompt: String::new(),
             custom_prompt_mode: CustomPromptMode::Append,
+            context_window_tokens: 32768,
+            max_output_tokens: 8192,
         }
     }
 }
@@ -318,6 +334,8 @@ pub struct Session {
     pub context_config: ContextConfig,
     #[serde(default)]
     pub is_deep_research: bool,
+    #[serde(default)]
+    pub routing: crate::engine::router::ConversationRouting,
 }
 
 impl Session {
@@ -332,6 +350,7 @@ impl Session {
             active_model: model.into(),
             context_config: ContextConfig::default(),
             is_deep_research: false,
+            routing: crate::engine::router::ConversationRouting::default(),
         }
     }
 
@@ -390,6 +409,107 @@ pub struct SessionManager {
     pub vault_key: Option<VaultKey>,
 }
 
+#[derive(Deserialize)]
+struct ContextConfigV1 {
+    pub enable_system_prompt: bool,
+    pub enable_temporal_anchor: bool,
+    pub spoof_datetime: String,
+    pub enable_host_env: bool,
+    pub spoof_os: String,
+    pub spoof_arch: String,
+    pub spoof_cwd: String,
+    pub spoof_user_home: String,
+    pub enable_tools: bool,
+    pub mask_tool_outputs: bool,
+    pub custom_system_prompt: String,
+    pub custom_prompt_mode: CustomPromptMode,
+}
+
+impl From<ContextConfigV1> for ContextConfig {
+    fn from(c: ContextConfigV1) -> Self {
+        Self {
+            enable_system_prompt: c.enable_system_prompt,
+            enable_temporal_anchor: c.enable_temporal_anchor,
+            spoof_datetime: c.spoof_datetime,
+            enable_host_env: c.enable_host_env,
+            spoof_os: c.spoof_os,
+            spoof_arch: c.spoof_arch,
+            spoof_cwd: c.spoof_cwd,
+            spoof_user_home: c.spoof_user_home,
+            enable_tools: c.enable_tools,
+            mask_tool_outputs: c.mask_tool_outputs,
+            custom_system_prompt: c.custom_system_prompt,
+            custom_prompt_mode: c.custom_prompt_mode,
+            context_window_tokens: 32768,
+            max_output_tokens: 8192,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct SessionV1 {
+    pub id: String,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub messages: Vec<ChatMessage>,
+    pub active_model: String,
+    pub context_config: ContextConfigV1,
+    pub is_deep_research: bool,
+}
+
+#[derive(Deserialize)]
+struct SessionV2 {
+    pub id: String,
+    pub title: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub messages: Vec<ChatMessage>,
+    pub active_model: String,
+    pub context_config: ContextConfigV1,
+    pub is_deep_research: bool,
+    pub routing: crate::engine::router::ConversationRouting,
+}
+
+pub fn deserialize_session_with_fallbacks(bytes: &[u8]) -> Option<Session> {
+    // 1. Try current format
+    if let Ok(sess) = postcard::from_bytes::<Session>(bytes) {
+        return Some(sess);
+    }
+
+    // 2. Try V2 (had routing, but older ContextConfig)
+    if let Ok(v2) = postcard::from_bytes::<SessionV2>(bytes) {
+        return Some(Session {
+            id: v2.id,
+            title: v2.title,
+            created_at: v2.created_at,
+            updated_at: v2.updated_at,
+            messages: v2.messages,
+            active_model: v2.active_model,
+            context_config: v2.context_config.into(),
+            is_deep_research: v2.is_deep_research,
+            routing: v2.routing,
+        });
+    }
+
+    // 3. Try V1 (original format before routing and context window tokens)
+    if let Ok(v1) = postcard::from_bytes::<SessionV1>(bytes) {
+        return Some(Session {
+            id: v1.id,
+            title: v1.title,
+            created_at: v1.created_at,
+            updated_at: v1.updated_at,
+            messages: v1.messages,
+            active_model: v1.active_model,
+            context_config: v1.context_config.into(),
+            is_deep_research: v1.is_deep_research,
+            routing: crate::engine::router::ConversationRouting::default(),
+        });
+    }
+
+    None
+}
+
 impl SessionManager {
     pub fn new(base_dir: impl AsRef<Path>) -> Self {
         let storage_dir = base_dir.as_ref().join("sessions");
@@ -437,7 +557,7 @@ impl SessionManager {
                     if let Some(key) = &self.vault_key {
                         if let Ok(bytes) = fs::read(&path) {
                             if let Ok(decrypted) = key.decrypt(&bytes) {
-                                if let Ok(session) = postcard::from_bytes::<Session>(&decrypted) {
+                                if let Some(session) = deserialize_session_with_fallbacks(&decrypted) {
                                     sessions.push(session);
                                 }
                             }
@@ -467,5 +587,35 @@ impl SessionManager {
         let r1 = fs::remove_file(silo_path).is_ok();
         let r2 = fs::remove_file(json_path).is_ok();
         r1 || r2
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_load_all_existing_sessions_with_migration() {
+        let vm = crate::vault::VaultManager::new();
+        let key = vm.get_or_create_auto_key().unwrap();
+        let mut total = 0;
+        let mut loaded = 0;
+
+        for entry in std::fs::read_dir("sessions").unwrap().flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("silo") {
+                total += 1;
+                let bytes = std::fs::read(&path).unwrap();
+                let dec = key.decrypt(&bytes).unwrap();
+                if let Some(s) = deserialize_session_with_fallbacks(&dec) {
+                    loaded += 1;
+                    println!("Loaded: {} ({})", s.title, s.id);
+                } else {
+                    println!("FAILED TO LOAD: {:?}", path);
+                }
+            }
+        }
+        println!("TOTAL: {}, LOADED: {}", total, loaded);
+        assert_eq!(total, loaded);
     }
 }
