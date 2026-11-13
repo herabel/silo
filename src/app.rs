@@ -3217,21 +3217,14 @@ impl eframe::App for SiloApp {
             let mut save_needed = false;
             let mut close_clicked = false;
 
-            egui::Window::new("⚙ Silo Settings")
+            egui::Window::new("◈ Silo Settings")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(true)
-                .default_size(Vec2::new(760.0, 560.0))
+                .default_size(Vec2::new(740.0, 520.0))
                 .min_width(620.0)
-                .min_height(460.0)
+                .min_height(440.0)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, 0.0))
-                .frame(
-                    Frame::window(&ctx.style())
-                        .fill(Color32::from_rgb(11, 14, 20))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(30, 38, 54)))
-                        .rounding(Rounding::same(10.0))
-                        .inner_margin(Margin::same(14.0)),
-                )
                 .show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         // Left sidebar: Tabs navigation
@@ -3305,10 +3298,11 @@ impl eframe::App for SiloApp {
                         ui.separator();
                         ui.add_space(8.0);
 
-                        // Right panel: Content for the selected tab
-                        egui::ScrollArea::vertical()
-                            .auto_shrink([false; 2])
-                            .show(ui, |ui| {
+                        // Right panel: Content for the selected tab (Vertical layout)
+                        ui.vertical(|ui| {
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
                                 match self.settings_tab {
                                     SettingsTab::Server => {
                                         ui.label(RichText::new("OPENAI-COMPATIBLE INFERENCE ENDPOINT").color(Color32::from_rgb(56, 189, 248)).strong().size(11.5));
@@ -3777,6 +3771,7 @@ impl eframe::App for SiloApp {
                                     }
                                 }
                             });
+                        });
                     });
                 });
 
