@@ -1758,13 +1758,13 @@ impl eframe::App for SiloApp {
             ctx.request_repaint();
         }
 
-        // 1. TOP NAVIGATION & STATUS BAR (Linear/Raycast style, no overlapping)
+        // 1. TOP NAVIGATION & STATUS BAR (Antigravity/Linear sleek menu bar)
         egui::TopBottomPanel::top("top_bar")
             .frame(
                 Frame::none()
-                    .fill(Color32::from_rgb(11, 14, 20))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(24, 30, 44)))
-                    .inner_margin(Margin::symmetric(14.0, 8.0)),
+                    .fill(Color32::from_rgb(10, 12, 17))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(22, 27, 38)))
+                    .inner_margin(Margin::symmetric(14.0, 7.0)),
             )
             .show(ctx, |ui| {
                 let mut toggle_deep = false;
@@ -2038,162 +2038,94 @@ impl eframe::App for SiloApp {
 
                             ui.add_space(10.0);
 
-                            // Modern Linear/Raycast Branding (Neutral, clean, multi-model runtime)
+                            // Modern Branding
                             ui.label(
                                 RichText::new("◈  SILO")
                                     .color(Color32::from_rgb(248, 250, 252))
                                     .strong()
                                     .size(13.0),
                             );
-                            Frame::none()
-                                .fill(Color32::from_rgb(19, 23, 34))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(32, 40, 58)))
-                                .rounding(Rounding::same(4.0))
-                                .inner_margin(Margin::symmetric(6.0, 2.0))
-                                .show(ui, |ui| {
-                                    ui.label(
-                                        RichText::new("LOCAL RUNTIME")
-                                            .color(Color32::from_rgb(148, 163, 184))
-                                            .size(9.5)
-                                            .strong(),
-                                    );
-                                });
 
-                            ui.add_space(10.0);
+                            ui.add_space(8.0);
 
-                            // Active session title & settings
-                            if let Some(sess) = self.active_session() {
-                                let rem_w = ui.available_width();
-                                let max_chars = ((rem_w - 200.0).max(40.0) / 7.5) as usize;
-                                let title_display = if sess.title.chars().count() > max_chars {
-                                    format!(
-                                        "{}...",
-                                        sess.title
-                                            .chars()
-                                            .take(max_chars.saturating_sub(2))
-                                            .collect::<String>()
-                                    )
-                                } else {
-                                    sess.title.clone()
-                                };
-                                Frame::none()
-                                    .fill(Color32::from_rgb(17, 21, 30))
-                                    .stroke(Stroke::new(1.0, Color32::from_rgb(28, 35, 50)))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(Margin::symmetric(8.0, 3.0))
-                                    .show(ui, |ui| {
-                                        ui.label(
-                                            RichText::new(title_display)
-                                                .color(Color32::from_rgb(203, 213, 225))
-                                                .size(11.5),
-                                        );
-                                    });
-
-                                ui.add_space(6.0);
-
-                                let is_deep = sess.is_deep_research;
-                                let deep_btn = ui.add(
-                                    egui::Button::new(
-                                        RichText::new(if is_deep {
-                                            "Deep: ON"
-                                        } else {
-                                            "Deep: OFF"
-                                        })
-                                        .color(if is_deep {
-                                            Color32::from_rgb(192, 132, 252)
-                                        } else {
-                                            Color32::from_rgb(148, 163, 184)
-                                        })
-                                        .size(11.0),
-                                    )
-                                    .fill(if is_deep {
-                                        Color32::from_rgb(36, 18, 48)
-                                    } else {
-                                        Color32::from_rgb(17, 21, 30)
-                                    })
-                                    .stroke(Stroke::new(
-                                        1.0,
-                                        if is_deep {
-                                            Color32::from_rgb(147, 51, 234)
-                                        } else {
-                                            Color32::from_rgb(30, 37, 52)
-                                        },
-                                    ))
-                                    .rounding(Rounding::same(6.0)),
-                                );
-                                if deep_btn.clicked() {
-                                    toggle_deep = true;
-                                }
-
-                                ui.add_space(6.0);
-
-                                let is_spoofed = !sess.context_config.enable_system_prompt
+                            // Top menu bar (Antigravity-style navigation buttons)
+                            let is_spoofed = self.active_session().map(|sess| {
+                                !sess.context_config.enable_system_prompt
                                     || !sess.context_config.enable_host_env
                                     || !sess.context_config.enable_temporal_anchor
                                     || !sess.context_config.spoof_os.is_empty()
                                     || !sess.context_config.spoof_cwd.is_empty()
                                     || !sess.context_config.spoof_user_home.is_empty()
                                     || !sess.context_config.custom_system_prompt.is_empty()
-                                    || !sess.context_config.enable_tools;
+                                    || !sess.context_config.enable_tools
+                            }).unwrap_or(false);
 
-                                let ctx_label = if is_spoofed {
-                                    "Context (Spoofed)"
+                            let ctx_btn = ui.add(
+                                egui::Button::new(
+                                    RichText::new(if is_spoofed { "Context ●" } else { "Context" })
+                                        .color(if is_spoofed { Color32::from_rgb(251, 191, 36) } else { Color32::from_rgb(148, 163, 184) })
+                                        .size(11.5),
+                                )
+                                .fill(Color32::from_rgb(16, 20, 28))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                .rounding(Rounding::same(5.0)),
+                            );
+                            if ctx_btn.clicked() {
+                                toggle_ctx_settings = true;
+                            }
+
+                            ui.add_space(4.0);
+
+                            let is_vault_locked = self.vault_manager.is_password_protected();
+                            let vault_btn = ui.add(
+                                egui::Button::new(
+                                    RichText::new(if is_vault_locked { "Vault (Pass)" } else { "Vault" })
+                                        .color(if is_vault_locked { Color32::from_rgb(74, 222, 128) } else { Color32::from_rgb(148, 163, 184) })
+                                        .size(11.5),
+                                )
+                                .fill(Color32::from_rgb(16, 20, 28))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                .rounding(Rounding::same(5.0)),
+                            );
+                            if vault_btn.clicked() {
+                                toggle_vault_settings = true;
+                            }
+
+                            ui.add_space(4.0);
+
+                            let is_deep = self.active_session().map(|s| s.is_deep_research).unwrap_or(false);
+                            let deep_btn = ui.add(
+                                egui::Button::new(
+                                    RichText::new(if is_deep { "Deep: ON" } else { "Deep: OFF" })
+                                        .color(if is_deep { Color32::from_rgb(192, 132, 252) } else { Color32::from_rgb(148, 163, 184) })
+                                        .size(11.5),
+                                )
+                                .fill(if is_deep { Color32::from_rgb(34, 18, 46) } else { Color32::from_rgb(16, 20, 28) })
+                                .stroke(Stroke::new(1.0, if is_deep { Color32::from_rgb(147, 51, 234) } else { Color32::from_rgb(28, 36, 50) }))
+                                .rounding(Rounding::same(5.0)),
+                            );
+                            if deep_btn.clicked() {
+                                toggle_deep = true;
+                            }
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(8.0);
+
+                            // Active session breadcrumb
+                            if let Some(sess) = self.active_session() {
+                                let rem_w = ui.available_width();
+                                let max_chars = ((rem_w - 60.0).max(30.0) / 7.5) as usize;
+                                let title_display = if sess.title.chars().count() > max_chars {
+                                    format!("{}...", sess.title.chars().take(max_chars.saturating_sub(2)).collect::<String>())
                                 } else {
-                                    "Context"
+                                    sess.title.clone()
                                 };
-
-                                let ctx_btn = ui.add(
-                                    egui::Button::new(
-                                        RichText::new(ctx_label)
-                                            .color(if is_spoofed {
-                                                Color32::from_rgb(251, 191, 36)
-                                            } else {
-                                                Color32::from_rgb(148, 163, 184)
-                                            })
-                                            .size(11.0),
-                                    )
-                                    .fill(if is_spoofed {
-                                        Color32::from_rgb(36, 28, 16)
-                                    } else {
-                                        Color32::from_rgb(17, 21, 30)
-                                    })
-                                    .stroke(Stroke::new(
-                                        1.0,
-                                        if is_spoofed {
-                                            Color32::from_rgb(245, 158, 11)
-                                        } else {
-                                            Color32::from_rgb(30, 37, 52)
-                                        },
-                                    ))
-                                    .rounding(Rounding::same(6.0)),
+                                ui.label(
+                                    RichText::new(format!("◈ {}", title_display))
+                                        .color(Color32::from_rgb(148, 163, 184))
+                                        .size(11.5),
                                 );
-                                if ctx_btn.clicked() {
-                                    toggle_ctx_settings = true;
-                                }
-
-                                ui.add_space(6.0);
-                                let is_vault_locked = self.vault_manager.is_password_protected();
-                                let vault_btn = ui.add(
-                                    egui::Button::new(
-                                        RichText::new(if is_vault_locked {
-                                            "Vault (Pass)"
-                                        } else {
-                                            "Vault"
-                                        })
-                                        .color(if is_vault_locked {
-                                            Color32::from_rgb(74, 222, 128)
-                                        } else {
-                                            Color32::from_rgb(56, 189, 248)
-                                        })
-                                        .size(11.0),
-                                    )
-                                    .fill(Color32::from_rgb(17, 21, 30))
-                                    .stroke(Stroke::new(1.0, Color32::from_rgb(30, 37, 52)))
-                                    .rounding(Rounding::same(6.0)),
-                                );
-                                if vault_btn.clicked() {
-                                    toggle_vault_settings = true;
-                                }
                             }
                         });
                     });
@@ -2414,175 +2346,186 @@ impl eframe::App for SiloApp {
                 });
         }
 
-        // 3. BOTTOM FLOATING INPUT CONTAINER (Docked, capped height with internal scroll)
+        // 3. BOTTOM FLOATING INPUT CONTAINER (Centered, Obsidian Canvas dock)
         egui::TopBottomPanel::bottom("bottom_input_v3")
             .resizable(false)
             .max_height(185.0)
             .frame(
                 Frame::none()
-                    .fill(Color32::from_rgb(13, 15, 20))
+                    .fill(Color32::from_rgb(10, 12, 17))
                     .inner_margin(Margin::symmetric(16.0, 6.0)),
             )
             .show(ctx, |ui| {
-                Frame::none()
-                    .fill(Color32::from_rgb(16, 20, 28))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
-                    .rounding(Rounding::same(9.0))
-                    .shadow(egui::epaint::Shadow {
-                        offset: egui::vec2(0.0, 1.5),
-                        blur: 8.0,
-                        spread: 0.0,
-                        color: Color32::from_black_alpha(45),
-                    })
-                    .inner_margin(Margin::symmetric(14.0, 8.0))
-                    .show(ui, |ui| {
-                        // Header row: Status & Stop generation
-                        ui.horizontal(|ui| {
-                            if self.is_generating {
-                                if ui.add(
-                                    egui::Button::new(RichText::new("Stop").color(Color32::from_rgb(255, 100, 100)).strong().size(11.0))
-                                        .fill(Color32::from_rgb(45, 20, 25))
-                                        .stroke(Stroke::new(1.0, Color32::from_rgb(220, 38, 38)))
-                                        .rounding(Rounding::same(4.0)),
-                                ).clicked() {
-                                    self.cancel_current_generation();
-                                }
-                                ui.add_space(6.0);
-                            }
+                let max_dock_w = 840.0;
+                let avail_w = ui.available_width();
+                let pad_x = ((avail_w - max_dock_w) / 2.0).max(4.0);
 
-                            ui.label(RichText::new(&self.status_message).color(Color32::from_rgb(148, 163, 184)).size(11.0));
-                        });
-
-                        ui.add_space(2.0);
-
-                        if !self.staged_images.is_empty() {
-                            let mut remove_idx = None;
-                            ui.horizontal_wrapped(|ui| {
-                                for (idx, att) in self.staged_images.iter().enumerate() {
-                                    Frame::none()
-                                        .fill(Color32::from_rgb(14, 18, 28))
-                                        .stroke(Stroke::new(1.0, Color32::from_rgb(59, 130, 246)))
-                                        .rounding(Rounding::same(6.0))
-                                        .inner_margin(Margin::same(4.0))
-                                        .show(ui, |ui| {
-                                            ui.horizontal(|ui| {
-                                                if let Some(bytes) = att.raw_bytes() {
-                                                    ui.add(
-                                                        egui::Image::from_bytes(format!("bytes://staged_{}.png", att.id), bytes)
-                                                            .max_height(40.0)
-                                                            .max_width(60.0)
-                                                            .rounding(Rounding::same(4.0))
-                                                    );
-                                                }
-                                                ui.vertical(|ui| {
-                                                    ui.label(RichText::new(format!("{}x{}", att.width, att.height))
-                                                        .size(10.0)
-                                                        .strong()
-                                                        .color(Color32::from_rgb(226, 232, 240)));
-                                                    ui.label(RichText::new(format!("{} KB", att.byte_size / 1024))
-                                                        .size(9.0)
-                                                        .color(Color32::from_rgb(148, 163, 184)));
-                                                });
-                                                if ui.button(RichText::new("×").color(Color32::from_rgb(239, 68, 68)).strong().size(11.0)).on_hover_text("Remove image").clicked() {
-                                                    remove_idx = Some(idx);
-                                                }
-                                            });
-                                        });
-                                    ui.add_space(4.0);
-                                }
-                            });
-                            if let Some(idx) = remove_idx {
-                                self.staged_images.remove(idx);
-                            }
-                            ui.add_space(2.0);
-                        }
-
-                        // Scrollable multiline TextEdit capped at ~100px with smooth vertical scroll
-                        let input_response = egui::ScrollArea::vertical()
-                            .id_salt("bottom_input_text_scroll")
-                            .max_height(100.0)
-                            .auto_shrink([false, true])
-                            .show(ui, |ui| {
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut self.input_text)
-                                        .hint_text("Ask anything, or run /deep, /calc, /run, /skill... (Ctrl+Enter to send)")
-                                        .desired_rows(2)
-                                        .desired_width(f32::INFINITY)
-                                        .font(egui::TextStyle::Body)
-                                        .frame(false),
-                                )
+                ui.horizontal(|ui| {
+                    ui.add_space(pad_x);
+                    ui.vertical(|ui| {
+                        ui.set_max_width(max_dock_w.min(avail_w - 8.0));
+                        Frame::none()
+                            .fill(Color32::from_rgb(14, 18, 25))
+                            .stroke(Stroke::new(1.0, Color32::from_rgb(26, 33, 46)))
+                            .rounding(Rounding::same(12.0))
+                            .shadow(egui::epaint::Shadow {
+                                offset: egui::vec2(0.0, 2.5),
+                                blur: 10.0,
+                                spread: 0.0,
+                                color: Color32::from_black_alpha(45),
                             })
-                            .inner;
+                            .inner_margin(Margin::symmetric(14.0, 8.0))
+                            .show(ui, |ui| {
+                                // Header row: Status & Stop generation
+                                ui.horizontal(|ui| {
+                                    if self.is_generating {
+                                        if ui.add(
+                                            egui::Button::new(RichText::new("Stop").color(Color32::from_rgb(255, 100, 100)).strong().size(11.0))
+                                                .fill(Color32::from_rgb(45, 20, 25))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(220, 38, 38)))
+                                                .rounding(Rounding::same(4.0)),
+                                        ).clicked() {
+                                            self.cancel_current_generation();
+                                        }
+                                        ui.add_space(6.0);
+                                    }
 
-                        // Check Ctrl+V specifically when text edit has focus or globally
-                        if input_response.has_focus() && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
-                            if let Ok(att) = ChatImageAttachment::from_clipboard() {
-                                let dims = format!("{}x{}", att.width, att.height);
-                                let kb = att.byte_size / 1024;
-                                self.status_message = format!("Attached clipboard image ({} px, {} KB)", dims, kb);
-                                self.staged_images.push(att);
-                            }
-                        }
+                                    ui.label(RichText::new(&self.status_message).color(Color32::from_rgb(148, 163, 184)).size(11.0));
+                                });
 
-                        if input_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl) {
-                            self.send_message();
-                        }
+                                ui.add_space(2.0);
 
-                        ui.add_space(4.0);
-
-                        // Footer row: Quick Action Pills + Send Button
-                        ui.horizontal(|ui| {
-                            // Quick command pills
-                            let pill = |ui: &mut egui::Ui, text: &str, border: Color32| -> egui::Response {
-                                ui.add(
-                                    egui::Button::new(RichText::new(text).color(Color32::from_rgb(226, 232, 240)).size(11.5))
-                                        .fill(Color32::from_rgb(24, 28, 40))
-                                        .stroke(Stroke::new(1.0, border))
-                                        .rounding(Rounding::same(6.0)),
-                                )
-                            };
-
-                            if pill(ui, "/deep", Color32::from_rgb(99, 102, 241)).clicked() {
-                                self.input_text = "/deep ".to_string();
-                            }
-                            if pill(ui, "/skill", Color32::from_rgb(244, 63, 94)).on_hover_text("Execute installed agent skill script").clicked() {
-                                self.input_text = "/skill ".to_string();
-                            }
-                            if pill(ui, "/calc", Color32::from_rgb(251, 191, 36)).clicked() {
-                                self.input_text = "/calc ".to_string();
-                            }
-                            if pill(ui, "/run", Color32::from_rgb(52, 211, 153)).clicked() {
-                                self.input_text = "/run ".to_string();
-                            }
-                            if pill(ui, "Paste Image", Color32::from_rgb(168, 85, 247)).on_hover_text("Paste image from clipboard (Ctrl+V) or drag & drop files").clicked() {
-                                self.paste_image_from_clipboard();
-                            }
-                            if pill(ui, "Clear", Color32::from_rgb(75, 85, 99)).clicked() {
-                                if let Some(sess) = self.active_session_mut() {
-                                    sess.messages.clear();
+                                if !self.staged_images.is_empty() {
+                                    let mut remove_idx = None;
+                                    ui.horizontal_wrapped(|ui| {
+                                        for (idx, att) in self.staged_images.iter().enumerate() {
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(14, 18, 28))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(59, 130, 246)))
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(Margin::same(4.0))
+                                                .show(ui, |ui| {
+                                                    ui.horizontal(|ui| {
+                                                        if let Some(bytes) = att.raw_bytes() {
+                                                            ui.add(
+                                                                egui::Image::from_bytes(format!("bytes://staged_{}.png", att.id), bytes)
+                                                                    .max_height(40.0)
+                                                                    .max_width(60.0)
+                                                                    .rounding(Rounding::same(4.0))
+                                                            );
+                                                        }
+                                                        ui.vertical(|ui| {
+                                                            ui.label(RichText::new(format!("{}x{}", att.width, att.height))
+                                                                .size(10.0)
+                                                                .strong()
+                                                                .color(Color32::from_rgb(226, 232, 240)));
+                                                            ui.label(RichText::new(format!("{} KB", att.byte_size / 1024))
+                                                                .size(9.0)
+                                                                .color(Color32::from_rgb(148, 163, 184)));
+                                                        });
+                                                        if ui.button(RichText::new("×").color(Color32::from_rgb(239, 68, 68)).strong().size(11.0)).on_hover_text("Remove image").clicked() {
+                                                            remove_idx = Some(idx);
+                                                        }
+                                                    });
+                                                });
+                                            ui.add_space(4.0);
+                                        }
+                                    });
+                                    if let Some(idx) = remove_idx {
+                                        self.staged_images.remove(idx);
+                                    }
+                                    ui.add_space(2.0);
                                 }
-                                self.save_active_session();
-                            }
 
-                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                let can_send = (!self.input_text.trim().is_empty() || !self.staged_images.is_empty()) && !self.is_generating;
-                                let send_btn = egui::Button::new(
-                                    RichText::new("Send  ↵")
-                                        .color(if can_send { Color32::WHITE } else { Color32::from_rgb(120, 130, 150) })
-                                        .strong()
-                                        .size(13.0),
-                                )
-                                .fill(if can_send { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(28, 34, 48) })
-                                .stroke(Stroke::new(1.0, if can_send { Color32::from_rgb(59, 130, 246) } else { Color32::from_rgb(40, 48, 64) }))
-                                .rounding(Rounding::same(8.0))
-                                .min_size(Vec2::new(90.0, 28.0));
+                                // Scrollable multiline TextEdit capped at ~100px with smooth vertical scroll
+                                let input_response = egui::ScrollArea::vertical()
+                                    .id_salt("bottom_input_text_scroll")
+                                    .max_height(100.0)
+                                    .auto_shrink([false, true])
+                                    .show(ui, |ui| {
+                                        ui.add(
+                                            egui::TextEdit::multiline(&mut self.input_text)
+                                                .hint_text("Ask anything, or run /deep, /calc, /run, /skill... (Ctrl+Enter to send)")
+                                                .desired_rows(2)
+                                                .desired_width(f32::INFINITY)
+                                                .font(egui::TextStyle::Body)
+                                                .frame(false),
+                                        )
+                                    })
+                                    .inner;
 
-                                if ui.add(send_btn).clicked() {
+                                // Check Ctrl+V specifically when text edit has focus or globally
+                                if input_response.has_focus() && ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::V)) {
+                                    if let Ok(att) = ChatImageAttachment::from_clipboard() {
+                                        let dims = format!("{}x{}", att.width, att.height);
+                                        let kb = att.byte_size / 1024;
+                                        self.status_message = format!("Attached clipboard image ({} px, {} KB)", dims, kb);
+                                        self.staged_images.push(att);
+                                    }
+                                }
+
+                                if input_response.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter) && i.modifiers.ctrl) {
                                     self.send_message();
                                 }
+
+                                ui.add_space(4.0);
+
+                                // Footer row: Quick Action Pills + Send Button
+                                ui.horizontal(|ui| {
+                                    // Quick command pills
+                                    let pill = |ui: &mut egui::Ui, text: &str, border: Color32| -> egui::Response {
+                                        ui.add(
+                                            egui::Button::new(RichText::new(text).color(Color32::from_rgb(226, 232, 240)).size(11.5))
+                                                .fill(Color32::from_rgb(20, 24, 34))
+                                                .stroke(Stroke::new(1.0, border))
+                                                .rounding(Rounding::same(6.0)),
+                                        )
+                                    };
+
+                                    if pill(ui, "/deep", Color32::from_rgb(99, 102, 241)).clicked() {
+                                        self.input_text = "/deep ".to_string();
+                                    }
+                                    if pill(ui, "/skill", Color32::from_rgb(244, 63, 94)).on_hover_text("Execute installed agent skill script").clicked() {
+                                        self.input_text = "/skill ".to_string();
+                                    }
+                                    if pill(ui, "/calc", Color32::from_rgb(251, 191, 36)).clicked() {
+                                        self.input_text = "/calc ".to_string();
+                                    }
+                                    if pill(ui, "/run", Color32::from_rgb(52, 211, 153)).clicked() {
+                                        self.input_text = "/run ".to_string();
+                                    }
+                                    if pill(ui, "Paste Image", Color32::from_rgb(168, 85, 247)).on_hover_text("Paste image from clipboard (Ctrl+V) or drag & drop files").clicked() {
+                                        self.paste_image_from_clipboard();
+                                    }
+                                    if pill(ui, "Clear", Color32::from_rgb(75, 85, 99)).clicked() {
+                                        if let Some(sess) = self.active_session_mut() {
+                                            sess.messages.clear();
+                                        }
+                                        self.save_active_session();
+                                    }
+
+                                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                        let can_send = (!self.input_text.trim().is_empty() || !self.staged_images.is_empty()) && !self.is_generating;
+                                        let send_btn = egui::Button::new(
+                                            RichText::new("Send  ↵")
+                                                .color(if can_send { Color32::WHITE } else { Color32::from_rgb(120, 130, 150) })
+                                                .strong()
+                                                .size(13.0),
+                                        )
+                                        .fill(if can_send { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(24, 30, 42) })
+                                        .stroke(Stroke::new(1.0, if can_send { Color32::from_rgb(59, 130, 246) } else { Color32::from_rgb(34, 42, 58) }))
+                                        .rounding(Rounding::same(8.0))
+                                        .min_size(Vec2::new(90.0, 28.0));
+
+                                        if ui.add(send_btn).clicked() {
+                                            self.send_message();
+                                        }
+                                    });
+                                });
                             });
-                        });
                     });
+                    ui.add_space(pad_x);
+                });
             });
 
         // 4. RIGHT PROCESS & TERMINAL PANEL
@@ -2664,7 +2607,16 @@ impl eframe::App for SiloApp {
                         .auto_shrink([false, false])
                         .stick_to_bottom(true)
                         .show(ui, |ui| {
-                            if let Some(sess) = self.active_session() {
+                            let max_content_w = 840.0;
+                            let avail_w = ui.available_width();
+                            let side_pad = ((avail_w - max_content_w) / 2.0).max(4.0);
+
+                            ui.horizontal(|ui| {
+                                ui.add_space(side_pad);
+                                ui.vertical(|ui| {
+                                    ui.set_max_width(max_content_w.min(avail_w - 8.0));
+
+                                    if let Some(sess) = self.active_session() {
                                 let total_messages = sess.messages.len();
                                 let mut turn_items: Vec<UiTurnItem> = Vec::new();
                                 let mut i = 0;
@@ -2742,11 +2694,11 @@ impl eframe::App for SiloApp {
                                                 ui.horizontal(|ui| {
                                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                                                         Frame::none()
-                                                            .fill(Color32::from_rgb(26, 38, 58))
-                                                            .stroke(Stroke::new(1.0, Color32::from_rgb(45, 68, 104)))
-                                                            .rounding(Rounding::same(10.0))
-                                                            .inner_margin(Margin::same(12.0))
-                                                            .show(ui, |ui| {
+                                                            .fill(Color32::from_rgb(18, 24, 35))
+                                                                    .stroke(Stroke::new(1.0, Color32::from_rgb(32, 44, 66)))
+                                                                    .rounding(Rounding::same(10.0))
+                                                                    .inner_margin(Margin::same(12.0))
+                                                                    .show(ui, |ui| {
                                                                 ui.vertical(|ui| {
                                                                     ui.horizontal(|ui| {
                                                                         ui.label(RichText::new("◈ You").color(Color32::from_rgb(147, 197, 253)).strong().size(12.0));
@@ -3129,6 +3081,9 @@ impl eframe::App for SiloApp {
                                     ui.add_space(10.0);
                                 });
                             }
+                                    });
+                                    ui.add_space(side_pad);
+                                });
                         });
 
                     if let Some((tool_name, code_or_cmd)) = manual_tool_action {
