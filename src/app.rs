@@ -3217,19 +3217,23 @@ impl eframe::App for SiloApp {
             let mut save_needed = false;
             let mut close_clicked = false;
 
-            egui::Window::new("◈ Silo Settings")
+            egui::Window::new("Settings")
+                .id(egui::Id::new("silo_unified_settings_window"))
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(true)
-                .default_size(Vec2::new(740.0, 520.0))
-                .min_width(620.0)
-                .min_height(440.0)
-                .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, 0.0))
+                .default_size(Vec2::new(760.0, 560.0))
+                .min_width(640.0)
+                .min_height(480.0)
+                .default_pos(ctx.screen_rect().center())
+                .pivot(egui::Align2::CENTER_CENTER)
                 .show(ctx, |ui| {
+                    ui.set_min_height(460.0);
                     ui.horizontal(|ui| {
                         // Left sidebar: Tabs navigation
                         ui.vertical(|ui| {
                             ui.set_width(175.0);
+                            ui.set_min_height(440.0);
                             ui.add_space(4.0);
 
                             // Server tab button
@@ -3300,8 +3304,9 @@ impl eframe::App for SiloApp {
 
                         // Right panel: Content for the selected tab (Vertical layout)
                         ui.vertical(|ui| {
+                            ui.set_min_height(440.0);
                             egui::ScrollArea::vertical()
-                                .auto_shrink([false; 2])
+                                .auto_shrink([false, false])
                                 .show(ui, |ui| {
                                 match self.settings_tab {
                                     SettingsTab::Server => {
