@@ -132,6 +132,54 @@ The user requested an agent skill execution. You MUST immediately invoke `run_sk
 Do NOT write manual code or output conversational filler when a dedicated skill is invoked.
 Once the skill output is returned, review the output and present the result to the user."#;
 
+pub fn split_user_directive(content: &str) -> Option<(&'static str, &'static str, &str, &str)> {
+    let (icon, title) = if content.starts_with("DEEP RESEARCH DIRECTIVE:") {
+        ("🔬", "Deep Research Protocol")
+    } else if content.starts_with("[CALC DIRECTIVE]:") {
+        ("🧮", "Python Calculation Directive")
+    } else if content.starts_with("[RUN DIRECTIVE]:") {
+        ("💻", "Host Command Directive")
+    } else if content.starts_with("[SKILL DIRECTIVE]:") {
+        ("⚡", "Skill Execution Directive")
+    } else {
+        return None;
+    };
+
+    if let Some((directive_part, user_part)) = content.split_once("\n\n---\n\n") {
+        return Some((icon, title, directive_part.trim(), user_part.trim()));
+    }
+
+    if let Some(end_idx) = content.find("7. Verified Citation Matrix (DOIs, URLs, and source attribution).") {
+        let split_pos = end_idx + "7. Verified Citation Matrix (DOIs, URLs, and source attribution).".len();
+        let directive_part = content[..split_pos].trim();
+        let user_part = content[split_pos..].trim().trim_start_matches("---").trim();
+        return Some((icon, title, directive_part, user_part));
+    }
+
+    if let Some(end_idx) = content.find("Once the execution result is returned, present the verified numerical answer.") {
+        let split_pos = end_idx + "Once the execution result is returned, present the verified numerical answer.".len();
+        let directive_part = content[..split_pos].trim();
+        let user_part = content[split_pos..].trim().trim_start_matches("---").trim();
+        return Some((icon, title, directive_part, user_part));
+    }
+
+    if let Some(end_idx) = content.find("Once the execution output is returned, inspect stdout/stderr and present the results.") {
+        let split_pos = end_idx + "Once the execution output is returned, inspect stdout/stderr and present the results.".len();
+        let directive_part = content[..split_pos].trim();
+        let user_part = content[split_pos..].trim().trim_start_matches("---").trim();
+        return Some((icon, title, directive_part, user_part));
+    }
+
+    if let Some(end_idx) = content.find("Once the skill output is returned, review the output and present the result to the user.") {
+        let split_pos = end_idx + "Once the skill output is returned, review the output and present the result to the user.".len();
+        let directive_part = content[..split_pos].trim();
+        let user_part = content[split_pos..].trim().trim_start_matches("---").trim();
+        return Some((icon, title, directive_part, user_part));
+    }
+
+    None
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum RollbackTarget {
     EditUser(String),
@@ -574,7 +622,12 @@ impl SiloApp {
             match target {
                 RollbackTarget::EditUser(msg_id) => {
                     if let Some(idx) = sess.messages.iter().position(|m| m.id == msg_id) {
-                        edit_content = Some(sess.messages[idx].content.clone());
+                        let clean_text = if let Some((_, _, _, user_p)) = split_user_directive(&sess.messages[idx].content) {
+                            user_p.to_string()
+                        } else {
+                            sess.messages[idx].content.clone()
+                        };
+                        edit_content = Some(clean_text);
                         edit_images = Some(sess.messages[idx].images.clone());
                         sess.messages.truncate(idx);
                         sess.updated_at = chrono::Utc::now();
@@ -2864,7 +2917,32 @@ impl eframe::App for SiloApp {
                                                                         ui.add_space(6.0);
                                                                     }
                                                                     ui.push_id(("user_body", &msg.id), |ui| {
-                                                                        render_message_content(ui, &msg.content);
+                                                                        if let Some((icon, title, directive_body, user_prompt)) = split_user_directive(&msg.content) {
+                                                                            // Collapsed by default directive spoiler
+                                                                            egui::CollapsingHeader::new(
+                                                                                RichText::new(format!("{} {} (Injected Directive)", icon, title))
+                                                                                    .color(Color32::from_rgb(148, 163, 184))
+                                                                                    .size(11.5),
+                                                                            )
+                                                                            .default_open(false)
+                                                                            .show(ui, |ui| {
+                                                                                Frame::none()
+                                                                                    .fill(Color32::from_rgb(11, 14, 20))
+                                                                                    .stroke(Stroke::new(1.0, Color32::from_rgb(26, 33, 46)))
+                                                                                    .rounding(Rounding::same(6.0))
+                                                                                    .inner_margin(Margin::same(8.0))
+                                                                                    .show(ui, |ui| {
+                                                                                        render_message_content(ui, directive_body);
+                                                                                    });
+                                                                            });
+
+                                                                            ui.add_space(6.0);
+
+                                                                            // Actual user prompt
+                                                                            render_message_content(ui, user_prompt);
+                                                                        } else {
+                                                                            render_message_content(ui, &msg.content);
+                                                                        }
                                                                     });
                                                                 });
                                                             });
