@@ -140,6 +140,13 @@ pub enum RollbackTarget {
     RegenerateAssistant(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsTab {
+    Server,
+    Context,
+    Vault,
+}
+
 pub struct SiloApp {
     pub session_manager: SessionManager,
     pub sessions: Vec<Session>,
@@ -151,6 +158,8 @@ pub struct SiloApp {
     pub session_filter: String,
     pub show_sidebar: bool,
     pub show_process_panel: bool,
+    pub show_settings_modal: bool,
+    pub settings_tab: SettingsTab,
     pub show_context_settings: bool,
     pub is_generating: bool,
     pub is_deep_active: bool,
@@ -421,6 +430,8 @@ impl SiloApp {
             session_filter: String::new(),
             show_sidebar: true,
             show_process_panel: false,
+            show_settings_modal: false,
+            settings_tab: SettingsTab::Server,
             show_context_settings: false,
             is_generating: false,
             is_deep_active: false,
@@ -1911,10 +1922,11 @@ impl eframe::App for SiloApp {
                             "Cloud".to_string()
                         };
 
+                        let is_server_active = self.show_settings_modal && self.settings_tab == SettingsTab::Server;
                         let host_btn = ui.add(
                             egui::Button::new(
                                 RichText::new(host_text)
-                                    .color(if self.show_server_modal {
+                                    .color(if is_server_active {
                                         Color32::from_rgb(56, 189, 248)
                                     } else {
                                         Color32::from_rgb(148, 163, 184)
@@ -1922,14 +1934,14 @@ impl eframe::App for SiloApp {
                                     .monospace()
                                     .size(11.5),
                             )
-                            .fill(if self.show_server_modal {
+                            .fill(if is_server_active {
                                 Color32::from_rgb(16, 28, 44)
                             } else {
                                 Color32::from_rgb(17, 21, 30)
                             })
                             .stroke(Stroke::new(
                                 1.0,
-                                if self.show_server_modal {
+                                if is_server_active {
                                     Color32::from_rgb(56, 189, 248)
                                 } else {
                                     Color32::from_rgb(30, 37, 52)
@@ -1938,7 +1950,12 @@ impl eframe::App for SiloApp {
                             .rounding(Rounding::same(6.0)),
                         );
                         if host_btn.clicked() {
-                            self.show_server_modal = !self.show_server_modal;
+                            if self.show_settings_modal && self.settings_tab == SettingsTab::Server {
+                                self.show_settings_modal = false;
+                            } else {
+                                self.show_settings_modal = true;
+                                self.settings_tab = SettingsTab::Server;
+                            }
                         }
 
                         ui.add_space(8.0);
@@ -2060,14 +2077,15 @@ impl eframe::App for SiloApp {
                                     || !sess.context_config.enable_tools
                             }).unwrap_or(false);
 
+                            let is_ctx_open = self.show_settings_modal && self.settings_tab == SettingsTab::Context;
                             let ctx_btn = ui.add(
                                 egui::Button::new(
                                     RichText::new(if is_spoofed { "Context ●" } else { "Context" })
-                                        .color(if is_spoofed { Color32::from_rgb(251, 191, 36) } else { Color32::from_rgb(148, 163, 184) })
+                                        .color(if is_ctx_open { Color32::from_rgb(52, 211, 153) } else if is_spoofed { Color32::from_rgb(251, 191, 36) } else { Color32::from_rgb(148, 163, 184) })
                                         .size(11.5),
                                 )
-                                .fill(Color32::from_rgb(16, 20, 28))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                .fill(if is_ctx_open { Color32::from_rgb(14, 28, 24) } else { Color32::from_rgb(16, 20, 28) })
+                                .stroke(Stroke::new(1.0, if is_ctx_open { Color32::from_rgb(28, 64, 52) } else { Color32::from_rgb(28, 36, 50) }))
                                 .rounding(Rounding::same(5.0)),
                             );
                             if ctx_btn.clicked() {
@@ -2077,14 +2095,15 @@ impl eframe::App for SiloApp {
                             ui.add_space(4.0);
 
                             let is_vault_locked = self.vault_manager.is_password_protected();
+                            let is_vault_open = self.show_settings_modal && self.settings_tab == SettingsTab::Vault;
                             let vault_btn = ui.add(
                                 egui::Button::new(
                                     RichText::new(if is_vault_locked { "Vault (Pass)" } else { "Vault" })
-                                        .color(if is_vault_locked { Color32::from_rgb(74, 222, 128) } else { Color32::from_rgb(148, 163, 184) })
+                                        .color(if is_vault_open { Color32::from_rgb(244, 114, 182) } else if is_vault_locked { Color32::from_rgb(74, 222, 128) } else { Color32::from_rgb(148, 163, 184) })
                                         .size(11.5),
                                 )
-                                .fill(Color32::from_rgb(16, 20, 28))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                .fill(if is_vault_open { Color32::from_rgb(30, 20, 28) } else { Color32::from_rgb(16, 20, 28) })
+                                .stroke(Stroke::new(1.0, if is_vault_open { Color32::from_rgb(70, 35, 60) } else { Color32::from_rgb(28, 36, 50) }))
                                 .rounding(Rounding::same(5.0)),
                             );
                             if vault_btn.clicked() {
@@ -2143,11 +2162,21 @@ impl eframe::App for SiloApp {
                 }
 
                 if toggle_ctx_settings {
-                    self.show_context_settings = !self.show_context_settings;
+                    if self.show_settings_modal && self.settings_tab == SettingsTab::Context {
+                        self.show_settings_modal = false;
+                    } else {
+                        self.show_settings_modal = true;
+                        self.settings_tab = SettingsTab::Context;
+                    }
                 }
 
                 if toggle_vault_settings {
-                    self.show_vault_modal = !self.show_vault_modal;
+                    if self.show_settings_modal && self.settings_tab == SettingsTab::Vault {
+                        self.show_settings_modal = false;
+                    } else {
+                        self.show_settings_modal = true;
+                        self.settings_tab = SettingsTab::Vault;
+                    }
                 }
             });
 
@@ -2165,184 +2194,254 @@ impl eframe::App for SiloApp {
                 .show(ctx, |ui| {
                     let side_w = ui.available_width();
 
-                    // New Session button (Sleek dark button)
-                    let new_btn = egui::Button::new(
-                        RichText::new("＋  New Session")
-                            .color(Color32::from_rgb(241, 245, 249))
-                            .strong()
-                            .size(12.0),
-                    )
-                    .fill(Color32::from_rgb(18, 22, 30))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(34, 42, 58)))
-                    .rounding(Rounding::same(7.0))
-                    .min_size(Vec2::new(side_w, 32.0));
+                    // Pinned bottom Settings footer layout
+                    ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                        // 1. Settings button pinned at bottom
+                        ui.add_space(2.0);
 
-                    if ui.add(new_btn).clicked() {
-                        self.new_chat();
-                    }
+                        let is_settings_open = self.show_settings_modal;
+                        let (rect, resp) = ui.allocate_exact_size(Vec2::new(side_w, 32.0), egui::Sense::click());
+                        let is_hov = resp.hovered();
 
-                    ui.add_space(8.0);
+                        let bg_color = if is_settings_open {
+                            Color32::from_rgb(20, 25, 35)
+                        } else if is_hov {
+                            Color32::from_rgb(16, 20, 28)
+                        } else {
+                            Color32::TRANSPARENT
+                        };
 
-                    // Search box
-                    Frame::none()
-                        .fill(Color32::from_rgb(14, 17, 24))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(24, 30, 42)))
-                        .rounding(Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(8.0, 5.0))
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::singleline(&mut self.session_filter)
-                                    .hint_text("Search sessions...")
-                                    .desired_width(side_w)
-                                    .font(egui::TextStyle::Body)
-                                    .frame(false),
-                            );
+                        let border_stroke = if is_settings_open {
+                            Stroke::new(1.0, Color32::from_rgb(38, 48, 68))
+                        } else if is_hov {
+                            Stroke::new(1.0, Color32::from_rgb(26, 32, 44))
+                        } else {
+                            Stroke::NONE
+                        };
+
+                        let painter = ui.painter();
+                        painter.rect(rect, Rounding::same(6.0), bg_color, border_stroke);
+
+                        // Icon: ⚙
+                        painter.text(
+                            Pos2::new(rect.left() + 10.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            "⚙",
+                            egui::FontId::new(13.0, egui::FontFamily::Proportional),
+                            if is_settings_open {
+                                Color32::from_rgb(96, 165, 250)
+                            } else if is_hov {
+                                Color32::from_rgb(226, 232, 240)
+                            } else {
+                                Color32::from_rgb(148, 163, 184)
+                            },
+                        );
+
+                        // Label: Settings
+                        painter.text(
+                            Pos2::new(rect.left() + 30.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            "Settings",
+                            egui::FontId::new(12.5, egui::FontFamily::Proportional),
+                            if is_settings_open {
+                                Color32::from_rgb(248, 250, 252)
+                            } else if is_hov {
+                                Color32::from_rgb(226, 232, 240)
+                            } else {
+                                Color32::from_rgb(148, 163, 184)
+                            },
+                        );
+
+                        if resp.clicked() {
+                            self.show_settings_modal = !self.show_settings_modal;
+                        }
+
+                        ui.add_space(4.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+
+                        // 2. Main content filling all remaining space above
+                        ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                            // New Session button (Sleek dark button)
+                            let new_btn = egui::Button::new(
+                                RichText::new("＋  New Session")
+                                    .color(Color32::from_rgb(241, 245, 249))
+                                    .strong()
+                                    .size(12.0),
+                            )
+                            .fill(Color32::from_rgb(18, 22, 30))
+                            .stroke(Stroke::new(1.0, Color32::from_rgb(34, 42, 58)))
+                            .rounding(Rounding::same(7.0))
+                            .min_size(Vec2::new(side_w, 32.0));
+
+                            if ui.add(new_btn).clicked() {
+                                self.new_chat();
+                            }
+
+                            ui.add_space(8.0);
+
+                            // Search box
+                            Frame::none()
+                                .fill(Color32::from_rgb(14, 17, 24))
+                                .stroke(Stroke::new(1.0, Color32::from_rgb(24, 30, 42)))
+                                .rounding(Rounding::same(6.0))
+                                .inner_margin(Margin::symmetric(8.0, 5.0))
+                                .show(ui, |ui| {
+                                    ui.add(
+                                        egui::TextEdit::singleline(&mut self.session_filter)
+                                            .hint_text("Search sessions...")
+                                            .desired_width(side_w)
+                                            .font(egui::TextStyle::Body)
+                                            .frame(false),
+                                    );
+                                });
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                            ui.add_space(6.0);
+
+                            egui::ScrollArea::vertical()
+                                .auto_shrink([false; 2])
+                                .show(ui, |ui| {
+                                    let filter = self.session_filter.to_lowercase();
+                                    let active_id = self.active_session_id.clone();
+                                    let mut to_switch = None;
+                                    let mut to_delete = None;
+
+                                    let total_w = ui.available_width();
+
+                                    for sess in &self.sessions {
+                                        if !filter.is_empty()
+                                            && !sess.title.to_lowercase().contains(&filter)
+                                        {
+                                            continue;
+                                        }
+
+                                        let is_active = Some(&sess.id) == active_id.as_ref();
+                                        let card_size = Vec2::new(total_w, 32.0);
+                                        let (rect, resp) =
+                                            ui.allocate_exact_size(card_size, egui::Sense::click());
+
+                                        let is_hovered = resp.hovered();
+
+                                        let bg_color = if is_active {
+                                            Color32::from_rgb(20, 25, 35)
+                                        } else if is_hovered {
+                                            Color32::from_rgb(16, 20, 28)
+                                        } else {
+                                            Color32::TRANSPARENT
+                                        };
+
+                                        let border_stroke = if is_active {
+                                            Stroke::new(1.0, Color32::from_rgb(38, 48, 68))
+                                        } else if is_hovered {
+                                            Stroke::new(1.0, Color32::from_rgb(26, 32, 44))
+                                        } else {
+                                            Stroke::NONE
+                                        };
+
+                                        let painter = ui.painter();
+                                        painter.rect(rect, Rounding::same(6.0), bg_color, border_stroke);
+
+                                        let icon = "◇";
+
+                                        // Draw icon
+                                        let icon_pos = Pos2::new(rect.left() + 9.0, rect.center().y - 6.0);
+                                        painter.text(
+                                            icon_pos,
+                                            egui::Align2::LEFT_CENTER,
+                                            icon,
+                                            egui::FontId::new(11.0, egui::FontFamily::Proportional),
+                                            if is_active { Color32::from_rgb(96, 165, 250) } else { Color32::from_rgb(100, 116, 139) },
+                                        );
+
+                                        // Title text with strict boundary
+                                        let text_pos = Pos2::new(rect.left() + 26.0, rect.center().y);
+                                        let text_color = if is_active {
+                                            Color32::from_rgb(248, 250, 252)
+                                        } else if is_hovered {
+                                            Color32::from_rgb(226, 232, 240)
+                                        } else {
+                                            Color32::from_rgb(148, 163, 184)
+                                        };
+
+                                        let max_title_chars = ((total_w - 56.0) / 7.2).max(10.0) as usize;
+                                        let title_text = if sess.title.chars().count() > max_title_chars {
+                                            format!(
+                                                "{}...",
+                                                sess.title
+                                                    .chars()
+                                                    .take(max_title_chars.saturating_sub(2))
+                                                    .collect::<String>()
+                                            )
+                                        } else {
+                                            sess.title.clone()
+                                        };
+
+                                        painter.text(
+                                            text_pos,
+                                            egui::Align2::LEFT_CENTER,
+                                            title_text,
+                                            egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                                            text_color,
+                                        );
+
+                                        // Delete button: fixed 18px from right edge
+                                        let del_rect = Rect::from_center_size(
+                                            Pos2::new(rect.right() - 15.0, rect.center().y),
+                                            Vec2::new(18.0, 18.0),
+                                        );
+                                        let del_resp = ui.interact(
+                                            del_rect,
+                                            ui.id().with(&sess.id).with("del"),
+                                            egui::Sense::click(),
+                                        );
+                                        if del_resp.hovered() {
+                                            painter.rect_filled(
+                                                del_rect,
+                                                Rounding::same(4.0),
+                                                Color32::from_rgb(45, 20, 25),
+                                            );
+                                            painter.text(
+                                                del_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "×",
+                                                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                                                Color32::from_rgb(248, 113, 113),
+                                            );
+                                        } else if is_hovered {
+                                            painter.text(
+                                                del_rect.center(),
+                                                egui::Align2::CENTER_CENTER,
+                                                "×",
+                                                egui::FontId::new(10.0, egui::FontFamily::Proportional),
+                                                Color32::from_rgb(148, 163, 184),
+                                            );
+                                        }
+
+                                        if del_resp.clicked() {
+                                            to_delete = Some(sess.id.clone());
+                                        } else if resp.clicked() {
+                                            to_switch = Some(sess.id.clone());
+                                        }
+
+                                        ui.add_space(3.0);
+                                    }
+
+                                    if let Some(id) = to_switch {
+                                        self.switch_session(id);
+                                    }
+                                    if let Some(id) = to_delete {
+                                        self.session_manager.delete_session(&id);
+                                        self.sessions.retain(|s| s.id != id);
+                                        if self.active_session_id.as_deref() == Some(&id) {
+                                            self.active_session_id =
+                                                self.sessions.first().map(|s| s.id.clone());
+                                        }
+                                    }
+                                });
                         });
-
-                    ui.add_space(8.0);
-                    ui.separator();
-                    ui.add_space(6.0);
-
-                    egui::ScrollArea::vertical()
-                        .auto_shrink([false; 2])
-                        .show(ui, |ui| {
-                            let filter = self.session_filter.to_lowercase();
-                            let active_id = self.active_session_id.clone();
-                            let mut to_switch = None;
-                            let mut to_delete = None;
-
-                            let total_w = ui.available_width();
-
-                            for sess in &self.sessions {
-                                if !filter.is_empty()
-                                    && !sess.title.to_lowercase().contains(&filter)
-                                {
-                                    continue;
-                                }
-
-                                let is_active = Some(&sess.id) == active_id.as_ref();
-                                let card_size = Vec2::new(total_w, 32.0);
-                                let (rect, resp) =
-                                    ui.allocate_exact_size(card_size, egui::Sense::click());
-
-                                let is_hovered = resp.hovered();
-
-                                let bg_color = if is_active {
-                                    Color32::from_rgb(20, 25, 35)
-                                } else if is_hovered {
-                                    Color32::from_rgb(16, 20, 28)
-                                } else {
-                                    Color32::TRANSPARENT
-                                };
-
-                                let border_stroke = if is_active {
-                                    Stroke::new(1.0, Color32::from_rgb(38, 48, 68))
-                                } else if is_hovered {
-                                    Stroke::new(1.0, Color32::from_rgb(26, 32, 44))
-                                } else {
-                                    Stroke::NONE
-                                };
-
-                                let painter = ui.painter();
-                                painter.rect(rect, Rounding::same(6.0), bg_color, border_stroke);
-
-                                let icon = "◇";
-
-                                // Draw icon
-                                let icon_pos = Pos2::new(rect.left() + 9.0, rect.center().y - 6.0);
-                                painter.text(
-                                    icon_pos,
-                                    egui::Align2::LEFT_CENTER,
-                                    icon,
-                                    egui::FontId::new(11.0, egui::FontFamily::Proportional),
-                                    if is_active { Color32::from_rgb(96, 165, 250) } else { Color32::from_rgb(100, 116, 139) },
-                                );
-
-                                // Title text with strict boundary
-                                let text_pos = Pos2::new(rect.left() + 26.0, rect.center().y);
-                                let text_color = if is_active {
-                                    Color32::from_rgb(248, 250, 252)
-                                } else if is_hovered {
-                                    Color32::from_rgb(226, 232, 240)
-                                } else {
-                                    Color32::from_rgb(148, 163, 184)
-                                };
-
-                                let max_title_chars = ((total_w - 56.0) / 7.2).max(10.0) as usize;
-                                let title_text = if sess.title.chars().count() > max_title_chars {
-                                    format!(
-                                        "{}...",
-                                        sess.title
-                                            .chars()
-                                            .take(max_title_chars.saturating_sub(2))
-                                            .collect::<String>()
-                                    )
-                                } else {
-                                    sess.title.clone()
-                                };
-
-                                painter.text(
-                                    text_pos,
-                                    egui::Align2::LEFT_CENTER,
-                                    title_text,
-                                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                                    text_color,
-                                );
-
-                                // Delete button: fixed 18px from right edge
-                                let del_rect = Rect::from_center_size(
-                                    Pos2::new(rect.right() - 15.0, rect.center().y),
-                                    Vec2::new(18.0, 18.0),
-                                );
-                                let del_resp = ui.interact(
-                                    del_rect,
-                                    ui.id().with(&sess.id).with("del"),
-                                    egui::Sense::click(),
-                                );
-                                if del_resp.hovered() {
-                                    painter.rect_filled(
-                                        del_rect,
-                                        Rounding::same(4.0),
-                                        Color32::from_rgb(45, 20, 25),
-                                    );
-                                    painter.text(
-                                        del_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        "×",
-                                        egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                                        Color32::from_rgb(248, 113, 113),
-                                    );
-                                } else if is_hovered {
-                                    painter.text(
-                                        del_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        "×",
-                                        egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                                        Color32::from_rgb(148, 163, 184),
-                                    );
-                                }
-
-                                if del_resp.clicked() {
-                                    to_delete = Some(sess.id.clone());
-                                } else if resp.clicked() {
-                                    to_switch = Some(sess.id.clone());
-                                }
-
-                                ui.add_space(3.0);
-                            }
-
-                            if let Some(id) = to_switch {
-                                self.switch_session(id);
-                            }
-                            if let Some(id) = to_delete {
-                                self.session_manager.delete_session(&id);
-                                self.sessions.retain(|s| s.id != id);
-                                if self.active_session_id.as_deref() == Some(&id) {
-                                    self.active_session_id =
-                                        self.sessions.first().map(|s| s.id.clone());
-                                }
-                            }
-                        });
+                    });
                 });
         }
 
@@ -3098,522 +3197,598 @@ impl eframe::App for SiloApp {
                 }
             });
 
-        // 5.5 VAULT SECURITY & ENCRYPTION MODAL
-        if self.show_vault_modal {
-            let mut open = true;
-            egui::Window::new("◈ Silo Vault Security & Encryption")
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_width(480.0)
-                .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label(RichText::new("CRYPTOGRAPHIC VAULT CONFIGURATION").color(Color32::from_rgb(56, 189, 248)).strong().size(11.5));
-                    ui.add_space(6.0);
-                    ui.label(RichText::new("Sessions are serialized via binary Postcard and encrypted with ChaCha20-Poly1305 AEAD. Cryptographic nonces and keys are sourced from hardware CPU intrinsics via shake-entropy.").color(Color32::from_rgb(148, 163, 184)).size(12.0));
-                    ui.add_space(12.0);
-
-                    let is_protected = self.vault_manager.is_password_protected();
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new("Current Mode:").strong());
-                        if is_protected {
-                            ui.label(RichText::new("Master Password Protected (Argon2id KEK)").color(Color32::from_rgb(74, 222, 128)).strong());
-                        } else {
-                            ui.label(RichText::new("Machine Key (~/.silo/silo.key)").color(Color32::from_rgb(56, 189, 248)).strong());
-                        }
-                    });
-
-                    ui.add_space(14.0);
-                    ui.separator();
-                    ui.add_space(14.0);
-
-                    if is_protected {
-                        ui.label(RichText::new("Switch back to Transparent Machine Key:").size(12.5).color(Color32::from_rgb(226, 232, 240)));
-                        ui.label(RichText::new("Removes the password prompt on startup. Sessions remain encrypted on disk.").size(11.5).color(Color32::from_rgb(148, 163, 184)));
-                        ui.add_space(8.0);
-                        if let Some(key) = &self.session_manager.vault_key {
-                            if ui.button("Revert to Machine Key (Remove Password)").clicked() {
-                                if let Err(e) = self.vault_manager.remove_master_password(key) {
-                                    self.vault_status_msg = Some(format!("Error: {}", e));
-                                } else {
-                                    self.vault_status_msg = Some("Reverted to transparent Machine Key.".to_string());
-                                }
-                            }
-                        }
-                    } else {
-                        ui.label(RichText::new("Set Master Password for Silo:").size(12.5).color(Color32::from_rgb(226, 232, 240)));
-                        ui.label(RichText::new("Encrypts the master vault key with Argon2id. You will be prompted for this password when launching Silo.").size(11.5).color(Color32::from_rgb(148, 163, 184)));
-                        ui.add_space(10.0);
-
-                        ui.horizontal(|ui| {
-                            ui.label("New Password:     ");
-                            ui.add(egui::TextEdit::singleline(&mut self.new_password_input).password(true));
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("Confirm Password: ");
-                            ui.add(egui::TextEdit::singleline(&mut self.confirm_password_input).password(true));
-                        });
-
-                        ui.add_space(10.0);
-                        if ui.button("Enable Master Password Protection").clicked() {
-                            if self.new_password_input.is_empty() {
-                                self.vault_status_msg = Some("Password cannot be empty.".to_string());
-                            } else if self.new_password_input != self.confirm_password_input {
-                                self.vault_status_msg = Some("Passwords do not match.".to_string());
-                            } else if let Some(key) = &self.session_manager.vault_key {
-                                match self.vault_manager.set_master_password(key, &self.new_password_input) {
-                                    Ok(_) => {
-                                        self.new_password_input.clear();
-                                        self.confirm_password_input.clear();
-                                        self.vault_status_msg = Some("Master password enabled successfully!".to_string());
-                                    }
-                                    Err(e) => {
-                                        self.vault_status_msg = Some(format!("Error: {}", e));
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if let Some(msg) = &self.vault_status_msg {
-                        ui.add_space(10.0);
-                        ui.label(RichText::new(msg).color(Color32::from_rgb(56, 189, 248)).size(12.0));
-                    }
-                });
-            if !open {
-                self.show_vault_modal = false;
-                self.vault_status_msg = None;
-            }
-        }
-
-        // 5.6 INFERENCE SERVER & HOST MODAL
-        if self.show_server_modal {
-            let mut open = true;
-            let mut close_clicked = false;
-            egui::Window::new("◈ Inference Server & API Settings")
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .default_width(520.0)
-                .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.label(RichText::new("OPENAI-COMPATIBLE INFERENCE ENDPOINT").color(Color32::from_rgb(56, 189, 248)).strong().size(11.5));
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Connect to local engines (LM Studio, llama.cpp, Ollama, vLLM) or remote OpenAI-compatible cloud providers.").color(Color32::from_rgb(148, 163, 184)).size(12.0));
-                    ui.add_space(10.0);
-
-                    ui.label(RichText::new("QUICK ENDPOINT PRESETS:").color(Color32::from_rgb(56, 189, 248)).strong().size(11.0));
-                    let mut connect_trigger = false;
-                    ui.horizontal_wrapped(|ui| {
-                        if ui.button("LM Studio (:1234)").clicked() {
-                            self.server_url = "http://127.0.0.1:1234".to_string();
-                            connect_trigger = true;
-                        }
-                        if ui.button("llama.cpp (:8080)").clicked() {
-                            self.server_url = "http://127.0.0.1:8080".to_string();
-                            connect_trigger = true;
-                        }
-                        if ui.button("Ollama (:11434)").clicked() {
-                            self.server_url = "http://127.0.0.1:11434".to_string();
-                            connect_trigger = true;
-                        }
-                        if ui.button("vLLM (:8000)").clicked() {
-                            self.server_url = "http://127.0.0.1:8000".to_string();
-                            connect_trigger = true;
-                        }
-                        if ui.button("OpenRouter").clicked() {
-                            self.server_url = "https://openrouter.ai/api/v1".to_string();
-                        }
-                    });
-                    ui.add_space(10.0);
-
-                    ui.label(RichText::new("Server Base URL:").strong().size(12.0));
-                    ui.add(egui::TextEdit::singleline(&mut self.server_url).desired_width(f32::INFINITY).hint_text("http://127.0.0.1:1234"));
-                    ui.add_space(6.0);
-
-                    ui.label(RichText::new("Active Model Identifier (Text Override):").strong().size(12.0));
-                    ui.add(egui::TextEdit::singleline(&mut self.selected_model).desired_width(f32::INFINITY).hint_text("e.g. glm-4.7-flash, anthropic/claude-3.5-sonnet, deepseek-chat"));
-                    ui.add_space(6.0);
-
-                    ui.label(RichText::new("API Key / Bearer Token (Optional):").strong().size(12.0));
-                    ui.add(egui::TextEdit::singleline(&mut self.api_key).desired_width(f32::INFINITY).password(true).hint_text("sk-... (leave empty for local engines)"));
-                    ui.add_space(12.0);
-
-                    if let Some(msg) = &self.server_status_msg {
-                        let is_err = msg.contains("0 model") || msg.contains("failed") || msg.contains("unreachable");
-                        ui.label(RichText::new(msg).color(if is_err { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(52, 211, 153) }).size(12.0));
-                        ui.add_space(8.0);
-                    }
-
-                    ui.horizontal(|ui| {
-                        if ui.button(RichText::new("Connect & Refresh Models").strong().color(Color32::WHITE)).clicked() || connect_trigger {
-                            self.save_config();
-                            let tx = self.models_tx.clone();
-                            let url = self.server_url.clone();
-                            let key = if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) };
-                            self.server_status_msg = Some("Querying host models...".to_string());
-                            self.tokio_handle.spawn(async move {
-                                let m = fetch_available_models(&url, key.as_deref()).await;
-                                let _ = tx.send(m);
-                            });
-                        }
-
-                        if ui.button("Close").clicked() {
-                            close_clicked = true;
-                        }
-                    });
-                });
-            if !open || close_clicked {
+        // 6. UNIFIED SETTINGS MODAL (Master-detail dialog)
+        if self.show_settings_modal || self.show_server_modal || self.show_context_settings || self.show_vault_modal {
+            if self.show_server_modal {
+                self.settings_tab = SettingsTab::Server;
                 self.show_server_modal = false;
-                self.save_config();
+                self.show_settings_modal = true;
+            } else if self.show_context_settings {
+                self.settings_tab = SettingsTab::Context;
+                self.show_context_settings = false;
+                self.show_settings_modal = true;
+            } else if self.show_vault_modal {
+                self.settings_tab = SettingsTab::Vault;
+                self.show_vault_modal = false;
+                self.show_settings_modal = true;
             }
-        }
 
-        // 6. CONTEXT & PRIVACY SETTINGS MODAL
-        if self.show_context_settings {
             let mut open = true;
             let mut save_needed = false;
+            let mut close_clicked = false;
 
-            egui::Window::new("◈ Dialogue Context & Privacy Settings")
+            egui::Window::new("⚙ Silo Settings")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(true)
-                .default_width(560.0)
-                .default_height(600.0)
+                .default_size(Vec2::new(760.0, 560.0))
+                .min_width(620.0)
+                .min_height(460.0)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::new(0.0, 0.0))
+                .frame(
+                    Frame::window(&ctx.style())
+                        .fill(Color32::from_rgb(11, 14, 20))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(30, 38, 54)))
+                        .rounding(Rounding::same(10.0))
+                        .inner_margin(Margin::same(14.0)),
+                )
                 .show(ctx, |ui| {
-                    if let Some(sess) = self.active_session_mut() {
-                        ui.label(
-                            RichText::new("Control or spoof the host environment, timestamps, and system data exposed to the neural network for this dialogue.")
-                                .color(Color32::from_rgb(148, 163, 184))
-                                .size(12.0),
-                        );
-                        ui.add_space(8.0);
+                    ui.horizontal(|ui| {
+                        // Left sidebar: Tabs navigation
+                        ui.vertical(|ui| {
+                            ui.set_width(175.0);
+                            ui.add_space(4.0);
 
-                        // Quick Presets
-                        ui.label(RichText::new("QUICK PRIVACY PRESETS:").color(Color32::from_rgb(56, 189, 248)).strong().size(11.5));
-                        ui.horizontal_wrapped(|ui| {
-                            if ui.button("Default Host (Windows 11 / Real Time)").clicked() {
-                                sess.context_config = ContextConfig::default();
-                                save_needed = true;
+                            // Server tab button
+                            let is_srv = self.settings_tab == SettingsTab::Server;
+                            let srv_btn = egui::Button::new(
+                                RichText::new("🌐  Inference Server")
+                                    .color(if is_srv { Color32::from_rgb(56, 189, 248) } else { Color32::from_rgb(148, 163, 184) })
+                                    .strong()
+                                    .size(12.5),
+                            )
+                            .fill(if is_srv { Color32::from_rgb(18, 26, 38) } else { Color32::TRANSPARENT })
+                            .stroke(if is_srv { Stroke::new(1.0, Color32::from_rgb(38, 54, 80)) } else { Stroke::NONE })
+                            .rounding(Rounding::same(6.0))
+                            .min_size(Vec2::new(170.0, 32.0));
+
+                            if ui.add(srv_btn).clicked() {
+                                self.settings_tab = SettingsTab::Server;
                             }
-                            if ui.button("Stealth Linux (Ubuntu / UTC / /home/dev)").clicked() {
-                                sess.context_config.enable_system_prompt = true;
-                                sess.context_config.enable_temporal_anchor = true;
-                                sess.context_config.spoof_datetime = "Monday, Jan 15, 2024, 12:00:00 (UTC)".to_string();
-                                sess.context_config.enable_host_env = true;
-                                sess.context_config.spoof_os = "linux".to_string();
-                                sess.context_config.spoof_arch = "x86_64".to_string();
-                                sess.context_config.spoof_cwd = "/home/developer/workspace".to_string();
-                                sess.context_config.spoof_user_home = "/home/developer".to_string();
-                                sess.context_config.mask_tool_outputs = true;
-                                save_needed = true;
+
+                            ui.add_space(4.0);
+
+                            // Context tab button
+                            let is_ctx_tab = self.settings_tab == SettingsTab::Context;
+                            let ctx_tab_btn = egui::Button::new(
+                                RichText::new("🛡  Context & Privacy")
+                                    .color(if is_ctx_tab { Color32::from_rgb(52, 211, 153) } else { Color32::from_rgb(148, 163, 184) })
+                                    .strong()
+                                    .size(12.5),
+                            )
+                            .fill(if is_ctx_tab { Color32::from_rgb(14, 28, 24) } else { Color32::TRANSPARENT })
+                            .stroke(if is_ctx_tab { Stroke::new(1.0, Color32::from_rgb(28, 64, 52)) } else { Stroke::NONE })
+                            .rounding(Rounding::same(6.0))
+                            .min_size(Vec2::new(170.0, 32.0));
+
+                            if ui.add(ctx_tab_btn).clicked() {
+                                self.settings_tab = SettingsTab::Context;
                             }
-                            if ui.button("macOS ARM64 (/Users/developer)").clicked() {
-                                sess.context_config.enable_system_prompt = true;
-                                sess.context_config.enable_temporal_anchor = true;
-                                sess.context_config.enable_host_env = true;
-                                sess.context_config.spoof_os = "macos".to_string();
-                                sess.context_config.spoof_arch = "aarch64".to_string();
-                                sess.context_config.spoof_cwd = "/Users/developer/code".to_string();
-                                sess.context_config.spoof_user_home = "/Users/developer".to_string();
-                                sess.context_config.mask_tool_outputs = true;
-                                save_needed = true;
+
+                            ui.add_space(4.0);
+
+                            // Vault tab button
+                            let is_vlt = self.settings_tab == SettingsTab::Vault;
+                            let vlt_btn = egui::Button::new(
+                                RichText::new("🔒  Security Vault")
+                                    .color(if is_vlt { Color32::from_rgb(244, 114, 182) } else { Color32::from_rgb(148, 163, 184) })
+                                    .strong()
+                                    .size(12.5),
+                            )
+                            .fill(if is_vlt { Color32::from_rgb(30, 20, 28) } else { Color32::TRANSPARENT })
+                            .stroke(if is_vlt { Stroke::new(1.0, Color32::from_rgb(70, 35, 60)) } else { Stroke::NONE })
+                            .rounding(Rounding::same(6.0))
+                            .min_size(Vec2::new(170.0, 32.0));
+
+                            if ui.add(vlt_btn).clicked() {
+                                self.settings_tab = SettingsTab::Vault;
                             }
-                            if ui.button("Zero Host Data (Stealth / Pure Prompt)").clicked() {
-                                sess.context_config.enable_system_prompt = true;
-                                sess.context_config.enable_temporal_anchor = false;
-                                sess.context_config.enable_host_env = false;
-                                sess.context_config.enable_tools = false;
-                                sess.context_config.mask_tool_outputs = true;
-                                save_needed = true;
-                            }
-                            if ui.button("Disable System Prompt Entirely").clicked() {
-                                sess.context_config.enable_system_prompt = false;
-                                save_needed = true;
-                            }
+
+                            ui.add_space((ui.available_height() - 40.0).max(0.0));
+                            ui.label(
+                                RichText::new("Silo AI Workbench\nNative Rust / egui")
+                                    .color(Color32::from_rgb(71, 85, 105))
+                                    .size(10.5),
+                            );
                         });
 
-                        ui.add_space(8.0);
                         ui.separator();
-                        ui.add_space(4.0);
+                        ui.add_space(8.0);
 
-                        egui::ScrollArea::vertical().max_height(420.0).show(ui, |ui| {
-                            // 1. Master System Prompt Toggle
-                            if ui.checkbox(&mut sess.context_config.enable_system_prompt, RichText::new("Enable System Prompt").strong()).changed() {
-                                save_needed = true;
-                            }
-                            if !sess.context_config.enable_system_prompt {
-                                ui.label(
-                                    RichText::new("[!] System prompt is completely disabled. The model will receive NO host information, date/time, or operating instructions.")
-                                        .color(Color32::from_rgb(245, 158, 11))
-                                        .italics()
-                                        .size(11.5),
-                                );
-                            }
-                            ui.add_space(6.0);
+                        // Right panel: Content for the selected tab
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false; 2])
+                            .show(ui, |ui| {
+                                match self.settings_tab {
+                                    SettingsTab::Server => {
+                                        ui.label(RichText::new("OPENAI-COMPATIBLE INFERENCE ENDPOINT").color(Color32::from_rgb(56, 189, 248)).strong().size(11.5));
+                                        ui.add_space(4.0);
+                                        ui.label(RichText::new("Connect to local engines (LM Studio, llama.cpp, Ollama, vLLM) or remote OpenAI-compatible cloud providers.").color(Color32::from_rgb(148, 163, 184)).size(12.0));
+                                        ui.add_space(10.0);
 
-                            // 2. Temporal Anchor
-                            Frame::none()
-                                .fill(Color32::from_rgb(16, 20, 28))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(Margin::same(10.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("Temporal Anchor (Date & Time)").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
-                                    if ui.checkbox(&mut sess.context_config.enable_temporal_anchor, "Send Date & Time to LLM").changed() {
-                                        save_needed = true;
-                                    }
+                                        ui.label(RichText::new("QUICK ENDPOINT PRESETS:").color(Color32::from_rgb(56, 189, 248)).strong().size(11.0));
+                                        let mut connect_trigger = false;
+                                        ui.horizontal_wrapped(|ui| {
+                                            if ui.button("LM Studio (:1234)").clicked() {
+                                                self.server_url = "http://127.0.0.1:1234".to_string();
+                                                connect_trigger = true;
+                                            }
+                                            if ui.button("llama.cpp (:8080)").clicked() {
+                                                self.server_url = "http://127.0.0.1:8080".to_string();
+                                                connect_trigger = true;
+                                            }
+                                            if ui.button("Ollama (:11434)").clicked() {
+                                                self.server_url = "http://127.0.0.1:11434".to_string();
+                                                connect_trigger = true;
+                                            }
+                                            if ui.button("vLLM (:8000)").clicked() {
+                                                self.server_url = "http://127.0.0.1:8000".to_string();
+                                                connect_trigger = true;
+                                            }
+                                            if ui.button("OpenRouter").clicked() {
+                                                self.server_url = "https://openrouter.ai/api/v1".to_string();
+                                            }
+                                        });
+                                        ui.add_space(10.0);
 
-                                    if sess.context_config.enable_temporal_anchor {
+                                        ui.label(RichText::new("Server Base URL:").strong().size(12.0));
+                                        ui.add(egui::TextEdit::singleline(&mut self.server_url).desired_width(f32::INFINITY).hint_text("http://127.0.0.1:1234"));
+                                        ui.add_space(6.0);
+
+                                        ui.label(RichText::new("Active Model Identifier (Text Override):").strong().size(12.0));
+                                        ui.add(egui::TextEdit::singleline(&mut self.selected_model).desired_width(f32::INFINITY).hint_text("e.g. glm-4.7-flash, omnicoder-9b, deepseek-chat"));
+                                        ui.add_space(6.0);
+
+                                        ui.label(RichText::new("API Key / Bearer Token (Optional):").strong().size(12.0));
+                                        ui.add(egui::TextEdit::singleline(&mut self.api_key).desired_width(f32::INFINITY).password(true).hint_text("sk-... (leave empty for local engines)"));
+                                        ui.add_space(12.0);
+
+                                        if let Some(msg) = &self.server_status_msg {
+                                            let is_err = msg.contains("0 model") || msg.contains("failed") || msg.contains("unreachable");
+                                            ui.label(RichText::new(msg).color(if is_err { Color32::from_rgb(248, 113, 113) } else { Color32::from_rgb(52, 211, 153) }).size(12.0));
+                                            ui.add_space(8.0);
+                                        }
+
                                         ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Spoofed Date/Time:").size(12.0));
-                                            if ui.add(
-                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_datetime)
-                                                    .hint_text("Leave empty for real local time")
-                                                    .desired_width(ui.available_width()),
-                                            ).changed() {
-                                                save_needed = true;
+                                            if ui.button(RichText::new("Connect & Refresh Models").strong().color(Color32::WHITE)).clicked() || connect_trigger {
+                                                self.save_config();
+                                                let tx = self.models_tx.clone();
+                                                let url = self.server_url.clone();
+                                                let key = if self.api_key.trim().is_empty() { None } else { Some(self.api_key.trim().to_string()) };
+                                                self.server_status_msg = Some("Querying host models...".to_string());
+                                                self.tokio_handle.spawn(async move {
+                                                    let m = fetch_available_models(&url, key.as_deref()).await;
+                                                    let _ = tx.send(m);
+                                                });
+                                            }
+
+                                            if ui.button("Done").clicked() {
+                                                close_clicked = true;
                                             }
                                         });
                                     }
-                                });
+                                    SettingsTab::Context => {
+                                        if let Some(sess) = self.active_session_mut() {
+                                            ui.label(
+                                                RichText::new("Control or spoof the host environment, timestamps, and system data exposed to the neural network for this dialogue.")
+                                                    .color(Color32::from_rgb(148, 163, 184))
+                                                    .size(12.0),
+                                            );
+                                            ui.add_space(8.0);
 
-                            ui.add_space(8.0);
-
-                            // 3. Host Environment Spoofing
-                            Frame::none()
-                                .fill(Color32::from_rgb(16, 20, 28))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(Margin::same(10.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("Host Environment & Paths").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
-                                    if ui.checkbox(&mut sess.context_config.enable_host_env, "Send Host Environment Block (OS, CWD, Home dir)").changed() {
-                                        save_needed = true;
-                                    }
-
-                                    if sess.context_config.enable_host_env {
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Spoofed OS:").size(12.0));
-                                            if ui.add(
-                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_os)
-                                                    .hint_text("e.g. linux, windows, macos")
-                                                    .desired_width(120.0),
-                                            ).changed() {
-                                                save_needed = true;
-                                            }
+                                            // Quick Presets
+                                            ui.label(RichText::new("QUICK PRIVACY PRESETS:").color(Color32::from_rgb(56, 189, 248)).strong().size(11.5));
+                                            ui.horizontal_wrapped(|ui| {
+                                                if ui.button("Default Host (Windows 11 / Real Time)").clicked() {
+                                                    sess.context_config = ContextConfig::default();
+                                                    save_needed = true;
+                                                }
+                                                if ui.button("Stealth Linux (Ubuntu / UTC / /home/dev)").clicked() {
+                                                    sess.context_config.enable_system_prompt = true;
+                                                    sess.context_config.enable_temporal_anchor = true;
+                                                    sess.context_config.spoof_datetime = "Monday, Jan 15, 2024, 12:00:00 (UTC)".to_string();
+                                                    sess.context_config.enable_host_env = true;
+                                                    sess.context_config.spoof_os = "linux".to_string();
+                                                    sess.context_config.spoof_arch = "x86_64".to_string();
+                                                    sess.context_config.spoof_cwd = "/home/developer/workspace".to_string();
+                                                    sess.context_config.spoof_user_home = "/home/developer".to_string();
+                                                    sess.context_config.mask_tool_outputs = true;
+                                                    save_needed = true;
+                                                }
+                                                if ui.button("macOS ARM64 (/Users/developer)").clicked() {
+                                                    sess.context_config.enable_system_prompt = true;
+                                                    sess.context_config.enable_temporal_anchor = true;
+                                                    sess.context_config.enable_host_env = true;
+                                                    sess.context_config.spoof_os = "macos".to_string();
+                                                    sess.context_config.spoof_arch = "aarch64".to_string();
+                                                    sess.context_config.spoof_cwd = "/Users/developer/code".to_string();
+                                                    sess.context_config.spoof_user_home = "/Users/developer".to_string();
+                                                    sess.context_config.mask_tool_outputs = true;
+                                                    save_needed = true;
+                                                }
+                                                if ui.button("Zero Host Data (Stealth / Pure Prompt)").clicked() {
+                                                    sess.context_config.enable_system_prompt = true;
+                                                    sess.context_config.enable_temporal_anchor = false;
+                                                    sess.context_config.enable_host_env = false;
+                                                    sess.context_config.enable_tools = false;
+                                                    sess.context_config.mask_tool_outputs = true;
+                                                    save_needed = true;
+                                                }
+                                                if ui.button("Disable System Prompt Entirely").clicked() {
+                                                    sess.context_config.enable_system_prompt = false;
+                                                    save_needed = true;
+                                                }
+                                            });
 
                                             ui.add_space(8.0);
-                                            ui.label(RichText::new("Arch:").size(12.0));
-                                            if ui.add(
-                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_arch)
-                                                    .hint_text("e.g. x86_64, aarch64")
-                                                    .desired_width(ui.available_width()),
-                                            ).changed() {
+                                            ui.separator();
+                                            ui.add_space(4.0);
+
+                                            // 1. Master System Prompt Toggle
+                                            if ui.checkbox(&mut sess.context_config.enable_system_prompt, RichText::new("Enable System Prompt").strong()).changed() {
                                                 save_needed = true;
                                             }
-                                        });
-
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Spoofed CWD:").size(12.0));
-                                            if ui.add(
-                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_cwd)
-                                                    .hint_text("e.g. /home/user/project")
-                                                    .desired_width(ui.available_width()),
-                                            ).changed() {
-                                                save_needed = true;
+                                            if !sess.context_config.enable_system_prompt {
+                                                ui.label(
+                                                    RichText::new("[!] System prompt is completely disabled. The model will receive NO host information, date/time, or operating instructions.")
+                                                        .color(Color32::from_rgb(245, 158, 11))
+                                                        .italics()
+                                                        .size(11.5),
+                                                );
                                             }
-                                        });
+                                            ui.add_space(6.0);
 
-                                        ui.add_space(4.0);
-                                        ui.horizontal(|ui| {
-                                            ui.label(RichText::new("Spoofed Home:").size(12.0));
-                                            if ui.add(
-                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_user_home)
-                                                    .hint_text("e.g. /home/developer")
-                                                    .desired_width(ui.available_width()),
-                                            ).changed() {
-                                                save_needed = true;
+                                            // 2. Temporal Anchor
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(16, 20, 28))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(Margin::same(10.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("Temporal Anchor (Date & Time)").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
+                                                    if ui.checkbox(&mut sess.context_config.enable_temporal_anchor, "Send Date & Time to LLM").changed() {
+                                                        save_needed = true;
+                                                    }
+
+                                                    if sess.context_config.enable_temporal_anchor {
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new("Spoofed Date/Time:").size(12.0));
+                                                            if ui.add(
+                                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_datetime)
+                                                                    .hint_text("Leave empty for real local time")
+                                                                    .desired_width(ui.available_width()),
+                                                            ).changed() {
+                                                                save_needed = true;
+                                                            }
+                                                        });
+                                                    }
+                                                });
+
+                                            ui.add_space(8.0);
+
+                                            // 3. Host Environment Spoofing
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(16, 20, 28))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(Margin::same(10.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("Host Environment & Paths").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
+                                                    if ui.checkbox(&mut sess.context_config.enable_host_env, "Send Host Environment Block (OS, CWD, Home dir)").changed() {
+                                                        save_needed = true;
+                                                    }
+
+                                                    if sess.context_config.enable_host_env {
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new("Spoofed OS:").size(12.0));
+                                                            if ui.add(
+                                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_os)
+                                                                    .hint_text("e.g. linux, windows, macos")
+                                                                    .desired_width(120.0),
+                                                            ).changed() {
+                                                                save_needed = true;
+                                                            }
+
+                                                            ui.add_space(8.0);
+                                                            ui.label(RichText::new("Arch:").size(12.0));
+                                                            if ui.add(
+                                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_arch)
+                                                                    .hint_text("e.g. x86_64, aarch64")
+                                                                    .desired_width(ui.available_width()),
+                                                            ).changed() {
+                                                                save_needed = true;
+                                                            }
+                                                        });
+
+                                                        ui.add_space(4.0);
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new("Spoofed CWD:").size(12.0));
+                                                            if ui.add(
+                                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_cwd)
+                                                                    .hint_text("e.g. /home/user/project")
+                                                                    .desired_width(ui.available_width()),
+                                                            ).changed() {
+                                                                save_needed = true;
+                                                            }
+                                                        });
+
+                                                        ui.add_space(4.0);
+                                                        ui.horizontal(|ui| {
+                                                            ui.label(RichText::new("Spoofed Home:").size(12.0));
+                                                            if ui.add(
+                                                                egui::TextEdit::singleline(&mut sess.context_config.spoof_user_home)
+                                                                    .hint_text("e.g. /home/developer")
+                                                                    .desired_width(ui.available_width()),
+                                                            ).changed() {
+                                                                save_needed = true;
+                                                            }
+                                                        });
+                                                    }
+
+                                                    ui.add_space(4.0);
+                                                    if ui.checkbox(&mut sess.context_config.mask_tool_outputs, "Sanitize real user paths & username in tool outputs").changed() {
+                                                        save_needed = true;
+                                                    }
+                                                });
+
+                                            ui.add_space(8.0);
+
+                                            // 4. Tools Capabilities
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(16, 20, 28))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(Margin::same(10.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("Tools & Execution").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
+                                                    if ui.checkbox(&mut sess.context_config.enable_tools, "Enable Tool Calling (Python, Shell, Web Search, Web Scout)").changed() {
+                                                        save_needed = true;
+                                                    }
+                                                });
+
+                                            ui.add_space(8.0);
+
+                                            // 5. Custom Directives
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(16, 20, 28))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(Margin::same(10.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("Custom Directives / Persona").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
+                                                    ui.horizontal(|ui| {
+                                                        ui.label("Mode:");
+                                                        let mut is_override = sess.context_config.custom_prompt_mode == CustomPromptMode::Override;
+                                                        if ui.radio_value(&mut is_override, false, "Append to Default Directives").changed() {
+                                                            sess.context_config.custom_prompt_mode = CustomPromptMode::Append;
+                                                            save_needed = true;
+                                                        }
+                                                        if ui.radio_value(&mut is_override, true, "Override Entirely (Clean Slate)").changed() {
+                                                            sess.context_config.custom_prompt_mode = CustomPromptMode::Override;
+                                                            save_needed = true;
+                                                        }
+                                                    });
+
+                                                    ui.add_space(4.0);
+                                                    if ui.add(
+                                                        egui::TextEdit::multiline(&mut sess.context_config.custom_system_prompt)
+                                                            .hint_text("Enter custom directives, background story, or persona rules...")
+                                                            .desired_rows(4)
+                                                            .desired_width(ui.available_width()),
+                                                    ).changed() {
+                                                        save_needed = true;
+                                                    }
+                                                });
+
+                                            ui.add_space(8.0);
+
+                                            // 6. Context Window & Generation Limits
+                                            Frame::none()
+                                                .fill(Color32::from_rgb(16, 20, 28))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
+                                                .rounding(Rounding::same(6.0))
+                                                .inner_margin(Margin::same(10.0))
+                                                .show(ui, |ui| {
+                                                    ui.label(RichText::new("Context Window & Max Tokens").color(Color32::from_rgb(56, 189, 248)).strong().size(12.0));
+                                                    ui.label(
+                                                        RichText::new("Max tokens retained in dialogue history and generation limit per turn.")
+                                                            .color(Color32::from_rgb(148, 163, 184))
+                                                            .size(11.5),
+                                                    );
+                                                    ui.add_space(6.0);
+
+                                                    // Context presets
+                                                    ui.horizontal_wrapped(|ui| {
+                                                        ui.label(RichText::new("Presets:").size(11.5));
+                                                        if ui.button("8k").clicked() {
+                                                            sess.context_config.context_window_tokens = 8192;
+                                                            sess.context_config.max_output_tokens = 2048;
+                                                            save_needed = true;
+                                                        }
+                                                        if ui.button("16k").clicked() {
+                                                            sess.context_config.context_window_tokens = 16384;
+                                                            sess.context_config.max_output_tokens = 4096;
+                                                            save_needed = true;
+                                                        }
+                                                        if ui.button("32k").clicked() {
+                                                            sess.context_config.context_window_tokens = 32768;
+                                                            sess.context_config.max_output_tokens = 8192;
+                                                            save_needed = true;
+                                                        }
+                                                        if ui.button("64k").clicked() {
+                                                            sess.context_config.context_window_tokens = 65536;
+                                                            sess.context_config.max_output_tokens = 12288;
+                                                            save_needed = true;
+                                                        }
+                                                        if ui.button("128k").clicked() {
+                                                            sess.context_config.context_window_tokens = 131072;
+                                                            sess.context_config.max_output_tokens = 16384;
+                                                            save_needed = true;
+                                                        }
+                                                        if ui.button("1M").clicked() {
+                                                            sess.context_config.context_window_tokens = 1048576;
+                                                            sess.context_config.max_output_tokens = 32768;
+                                                            save_needed = true;
+                                                        }
+                                                    });
+
+                                                    ui.add_space(8.0);
+
+                                                    // Custom values
+                                                    ui.horizontal(|ui| {
+                                                        ui.label("Context Window (tokens):");
+                                                        let mut ctx_val = sess.context_config.context_window_tokens as i64;
+                                                        if ui.add(egui::DragValue::new(&mut ctx_val).range(2048..=2097152).speed(1024)).changed() {
+                                                            sess.context_config.context_window_tokens = ctx_val.max(2048) as usize;
+                                                            save_needed = true;
+                                                        }
+
+                                                        ui.add_space(16.0);
+
+                                                        ui.label("Max Output (tokens):");
+                                                        let mut out_val = sess.context_config.max_output_tokens as i64;
+                                                        if ui.add(egui::DragValue::new(&mut out_val).range(512..=65536).speed(512)).changed() {
+                                                            sess.context_config.max_output_tokens = out_val.max(512) as usize;
+                                                            save_needed = true;
+                                                        }
+                                                    });
+                                                });
+
+                                            ui.add_space(8.0);
+
+                                            // 7. Live Inspector
+                                            let preview_prompt = build_configured_system_prompt(&sess.context_config);
+                                            egui::CollapsingHeader::new(
+                                                RichText::new(format!("Live Inspector: Exact Context Sent to LLM ({} chars)", preview_prompt.len()))
+                                                    .color(Color32::from_rgb(52, 211, 153))
+                                                    .size(12.0),
+                                            )
+                                            .default_open(false)
+                                            .show(ui, |ui| {
+                                                Frame::none()
+                                                    .fill(Color32::from_rgb(10, 12, 16))
+                                                    .stroke(Stroke::new(1.0, Color32::from_rgb(24, 30, 42)))
+                                                    .rounding(Rounding::same(6.0))
+                                                    .inner_margin(Margin::same(8.0))
+                                                    .show(ui, |ui| {
+                                                        if preview_prompt.is_empty() {
+                                                            ui.label(RichText::new("<NO SYSTEM PROMPT SENT>").color(Color32::GRAY).italics());
+                                                        } else {
+                                                            ui.label(RichText::new(&preview_prompt).monospace().color(Color32::from_rgb(167, 243, 208)).size(11.0));
+                                                        }
+                                                    });
+                                            });
+
+                                            ui.add_space(8.0);
+                                            if ui.button("Done").clicked() {
+                                                close_clicked = true;
                                             }
-                                        });
-                                    }
-
-                                    ui.add_space(4.0);
-                                    if ui.checkbox(&mut sess.context_config.mask_tool_outputs, "Sanitize real user paths & username in tool outputs").changed() {
-                                        save_needed = true;
-                                    }
-                                });
-
-                            ui.add_space(8.0);
-
-                            // 4. Tools Capabilities
-                            Frame::none()
-                                .fill(Color32::from_rgb(16, 20, 28))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(Margin::same(10.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("Tools & Execution").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
-                                    if ui.checkbox(&mut sess.context_config.enable_tools, "Enable Tool Calling (Python, Shell, Web Search, Web Scout)").changed() {
-                                        save_needed = true;
-                                    }
-                                });
-
-                            ui.add_space(8.0);
-
-                            // 5. Custom Directives
-                            Frame::none()
-                                .fill(Color32::from_rgb(16, 20, 28))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(Margin::same(10.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("Custom Directives / Persona").color(Color32::from_rgb(56, 189, 248)).strong().size(12.5));
-                                    ui.horizontal(|ui| {
-                                        ui.label("Mode:");
-                                        let mut is_override = sess.context_config.custom_prompt_mode == CustomPromptMode::Override;
-                                        if ui.radio_value(&mut is_override, false, "Append to Default Directives").changed() {
-                                            sess.context_config.custom_prompt_mode = CustomPromptMode::Append;
-                                            save_needed = true;
-                                        }
-                                        if ui.radio_value(&mut is_override, true, "Override Entirely (Clean Slate)").changed() {
-                                            sess.context_config.custom_prompt_mode = CustomPromptMode::Override;
-                                            save_needed = true;
-                                        }
-                                    });
-
-                                    ui.add_space(4.0);
-                                    if ui.add(
-                                        egui::TextEdit::multiline(&mut sess.context_config.custom_system_prompt)
-                                            .hint_text("Enter custom directives, background story, or persona rules...")
-                                            .desired_rows(4)
-                                            .desired_width(ui.available_width()),
-                                    ).changed() {
-                                        save_needed = true;
-                                    }
-                                });
-
-                            ui.add_space(8.0);
-
-                            // 6. Context Window & Generation Limits
-                            Frame::none()
-                                .fill(Color32::from_rgb(16, 20, 28))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(28, 36, 50)))
-                                .rounding(Rounding::same(6.0))
-                                .inner_margin(Margin::same(10.0))
-                                .show(ui, |ui| {
-                                    ui.label(RichText::new("Context Window & Max Tokens").color(Color32::from_rgb(56, 189, 248)).strong().size(12.0));
-                                    ui.label(
-                                        RichText::new("Max tokens retained in dialogue history and generation limit per turn.")
-                                            .color(Color32::from_rgb(148, 163, 184))
-                                            .size(11.5),
-                                    );
-                                    ui.add_space(6.0);
-
-                                    // Context presets
-                                    ui.horizontal_wrapped(|ui| {
-                                        ui.label(RichText::new("Presets:").size(11.5));
-                                        if ui.button("8k").clicked() {
-                                            sess.context_config.context_window_tokens = 8192;
-                                            sess.context_config.max_output_tokens = 2048;
-                                            save_needed = true;
-                                        }
-                                        if ui.button("16k").clicked() {
-                                            sess.context_config.context_window_tokens = 16384;
-                                            sess.context_config.max_output_tokens = 4096;
-                                            save_needed = true;
-                                        }
-                                        if ui.button("32k").clicked() {
-                                            sess.context_config.context_window_tokens = 32768;
-                                            sess.context_config.max_output_tokens = 8192;
-                                            save_needed = true;
-                                        }
-                                        if ui.button("64k").clicked() {
-                                            sess.context_config.context_window_tokens = 65536;
-                                            sess.context_config.max_output_tokens = 12288;
-                                            save_needed = true;
-                                        }
-                                        if ui.button("128k").clicked() {
-                                            sess.context_config.context_window_tokens = 131072;
-                                            sess.context_config.max_output_tokens = 16384;
-                                            save_needed = true;
-                                        }
-                                        if ui.button("1M").clicked() {
-                                            sess.context_config.context_window_tokens = 1048576;
-                                            sess.context_config.max_output_tokens = 32768;
-                                            save_needed = true;
-                                        }
-                                    });
-
-                                    ui.add_space(8.0);
-
-                                    // Custom values
-                                    ui.horizontal(|ui| {
-                                        ui.label("Context Window (tokens):");
-                                        let mut ctx_val = sess.context_config.context_window_tokens as i64;
-                                        if ui.add(egui::DragValue::new(&mut ctx_val).range(2048..=2097152).speed(1024)).changed() {
-                                            sess.context_config.context_window_tokens = ctx_val.max(2048) as usize;
-                                            save_needed = true;
-                                        }
-
-                                        ui.add_space(16.0);
-
-                                        ui.label("Max Output (tokens):");
-                                        let mut out_val = sess.context_config.max_output_tokens as i64;
-                                        if ui.add(egui::DragValue::new(&mut out_val).range(512..=65536).speed(512)).changed() {
-                                            sess.context_config.max_output_tokens = out_val.max(512) as usize;
-                                            save_needed = true;
-                                        }
-                                    });
-                                });
-
-                            ui.add_space(8.0);
-
-                            // 7. Live Inspector
-                            let preview_prompt = build_configured_system_prompt(&sess.context_config);
-                            egui::CollapsingHeader::new(
-                                RichText::new(format!("Live Inspector: Exact Context Sent to LLM ({} chars)", preview_prompt.len()))
-                                    .color(Color32::from_rgb(52, 211, 153))
-                                    .size(12.0),
-                            )
-                            .default_open(false)
-                            .show(ui, |ui| {
-                                Frame::none()
-                                    .fill(Color32::from_rgb(10, 12, 16))
-                                    .stroke(Stroke::new(1.0, Color32::from_rgb(24, 30, 42)))
-                                    .rounding(Rounding::same(6.0))
-                                    .inner_margin(Margin::same(8.0))
-                                    .show(ui, |ui| {
-                                        if preview_prompt.is_empty() {
-                                            ui.label(RichText::new("<NO SYSTEM PROMPT SENT>").color(Color32::GRAY).italics());
                                         } else {
-                                            ui.label(RichText::new(&preview_prompt).monospace().color(Color32::from_rgb(167, 243, 208)).size(11.0));
+                                            ui.label(RichText::new("No active session selected.").color(Color32::GRAY));
                                         }
-                                    });
+                                    }
+                                    SettingsTab::Vault => {
+                                        ui.label(RichText::new("CRYPTOGRAPHIC VAULT CONFIGURATION").color(Color32::from_rgb(56, 189, 248)).strong().size(11.5));
+                                        ui.add_space(6.0);
+                                        ui.label(RichText::new("Sessions are serialized via binary Postcard and encrypted with ChaCha20-Poly1305 AEAD. Cryptographic nonces and keys are sourced from hardware CPU intrinsics via shake-entropy.").color(Color32::from_rgb(148, 163, 184)).size(12.0));
+                                        ui.add_space(12.0);
+
+                                        let is_protected = self.vault_manager.is_password_protected();
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new("Current Mode:").strong());
+                                            if is_protected {
+                                                ui.label(RichText::new("Master Password Protected (Argon2id KEK)").color(Color32::from_rgb(74, 222, 128)).strong());
+                                            } else {
+                                                ui.label(RichText::new("Machine Key (~/.silo/silo.key)").color(Color32::from_rgb(56, 189, 248)).strong());
+                                            }
+                                        });
+
+                                        ui.add_space(14.0);
+                                        ui.separator();
+                                        ui.add_space(14.0);
+
+                                        if is_protected {
+                                            ui.label(RichText::new("Switch back to Transparent Machine Key:").size(12.5).color(Color32::from_rgb(226, 232, 240)));
+                                            ui.label(RichText::new("Removes the password prompt on startup. Sessions remain encrypted on disk.").size(11.5).color(Color32::from_rgb(148, 163, 184)));
+                                            ui.add_space(8.0);
+                                            if let Some(key) = &self.session_manager.vault_key {
+                                                if ui.button("Revert to Machine Key (Remove Password)").clicked() {
+                                                    if let Err(e) = self.vault_manager.remove_master_password(key) {
+                                                        self.vault_status_msg = Some(format!("Error: {}", e));
+                                                    } else {
+                                                        self.vault_status_msg = Some("Reverted to transparent Machine Key.".to_string());
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            ui.label(RichText::new("Set Master Password for Silo:").size(12.5).color(Color32::from_rgb(226, 232, 240)));
+                                            ui.label(RichText::new("Encrypts the master vault key with Argon2id. You will be prompted for this password when launching Silo.").size(11.5).color(Color32::from_rgb(148, 163, 184)));
+                                            ui.add_space(10.0);
+
+                                            ui.horizontal(|ui| {
+                                                ui.label("New Password:     ");
+                                                ui.add(egui::TextEdit::singleline(&mut self.new_password_input).password(true));
+                                            });
+                                            ui.horizontal(|ui| {
+                                                ui.label("Confirm Password: ");
+                                                ui.add(egui::TextEdit::singleline(&mut self.confirm_password_input).password(true));
+                                            });
+
+                                            ui.add_space(10.0);
+                                            if ui.button("Enable Master Password Protection").clicked() {
+                                                if self.new_password_input.is_empty() {
+                                                    self.vault_status_msg = Some("Password cannot be empty.".to_string());
+                                                } else if self.new_password_input != self.confirm_password_input {
+                                                    self.vault_status_msg = Some("Passwords do not match.".to_string());
+                                                } else if let Some(key) = &self.session_manager.vault_key {
+                                                    match self.vault_manager.set_master_password(key, &self.new_password_input) {
+                                                        Ok(_) => {
+                                                            self.new_password_input.clear();
+                                                            self.confirm_password_input.clear();
+                                                            self.vault_status_msg = Some("Master password enabled successfully!".to_string());
+                                                        }
+                                                        Err(e) => {
+                                                            self.vault_status_msg = Some(format!("Error: {}", e));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        if let Some(msg) = &self.vault_status_msg {
+                                            ui.add_space(10.0);
+                                            ui.label(RichText::new(msg).color(Color32::from_rgb(56, 189, 248)).size(12.0));
+                                        }
+
+                                        ui.add_space(14.0);
+                                        if ui.button("Done").clicked() {
+                                            close_clicked = true;
+                                        }
+                                    }
+                                }
                             });
-                        });
-
-                        ui.add_space(8.0);
-                        ui.separator();
-                        ui.add_space(4.0);
-
-                        ui.horizontal(|ui| {
-                            if ui.button(RichText::new("Done").strong()).clicked() {
-                                self.show_context_settings = false;
-                                save_needed = true;
-                            }
-                        });
-                    }
+                    });
                 });
 
-            if !open {
+            if !open || close_clicked {
+                self.show_settings_modal = false;
+                self.show_server_modal = false;
                 self.show_context_settings = false;
-            }
-
-            if save_needed {
-                self.save_active_session();
+                self.show_vault_modal = false;
+                self.save_config();
+                if save_needed {
+                    self.save_active_session();
+                }
             }
         }
     }
