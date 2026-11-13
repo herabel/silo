@@ -2151,29 +2151,29 @@ impl eframe::App for SiloApp {
                 }
             });
 
-        // 2. LEFT SIDEBAR (SESSION MANAGER — Linear alignment, zero bouncing margins)
+        // 2. LEFT SIDEBAR (SESSION MANAGER — Obsidian Canvas clean list)
         if self.show_sidebar {
             egui::SidePanel::left("sessions_sidebar")
                 .frame(
                     Frame::none()
-                        .fill(Color32::from_rgb(11, 13, 19))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(24, 29, 41)))
-                        .inner_margin(Margin::symmetric(10.0, 12.0)),
+                        .fill(Color32::from_rgb(11, 13, 18))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(22, 26, 36)))
+                        .inner_margin(Margin::symmetric(10.0, 10.0)),
                 )
                 .default_width(260.0)
                 .width_range(220.0..=360.0)
                 .show(ctx, |ui| {
                     let side_w = ui.available_width();
 
-                    // New Session button
+                    // New Session button (Sleek dark button)
                     let new_btn = egui::Button::new(
                         RichText::new("＋  New Session")
-                            .color(Color32::from_rgb(248, 250, 252))
+                            .color(Color32::from_rgb(241, 245, 249))
                             .strong()
-                            .size(12.5),
+                            .size(12.0),
                     )
-                    .fill(Color32::from_rgb(37, 99, 235))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(59, 130, 246)))
+                    .fill(Color32::from_rgb(18, 22, 30))
+                    .stroke(Stroke::new(1.0, Color32::from_rgb(34, 42, 58)))
                     .rounding(Rounding::same(7.0))
                     .min_size(Vec2::new(side_w, 32.0));
 
@@ -2185,10 +2185,10 @@ impl eframe::App for SiloApp {
 
                     // Search box
                     Frame::none()
-                        .fill(Color32::from_rgb(16, 20, 29))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(28, 35, 50)))
+                        .fill(Color32::from_rgb(14, 17, 24))
+                        .stroke(Stroke::new(1.0, Color32::from_rgb(24, 30, 42)))
                         .rounding(Rounding::same(6.0))
-                        .inner_margin(Margin::symmetric(8.0, 6.0))
+                        .inner_margin(Margin::symmetric(8.0, 5.0))
                         .show(ui, |ui| {
                             ui.add(
                                 egui::TextEdit::singleline(&mut self.session_filter)
@@ -2221,54 +2221,54 @@ impl eframe::App for SiloApp {
                                 }
 
                                 let is_active = Some(&sess.id) == active_id.as_ref();
-                                let card_size = Vec2::new(total_w, 36.0);
+                                let card_size = Vec2::new(total_w, 32.0);
                                 let (rect, resp) =
                                     ui.allocate_exact_size(card_size, egui::Sense::click());
 
                                 let is_hovered = resp.hovered();
 
                                 let bg_color = if is_active {
-                                    Color32::from_rgb(26, 34, 52)
+                                    Color32::from_rgb(20, 25, 35)
                                 } else if is_hovered {
-                                    Color32::from_rgb(20, 25, 36)
+                                    Color32::from_rgb(16, 20, 28)
                                 } else {
-                                    Color32::from_rgb(14, 17, 25)
+                                    Color32::TRANSPARENT
                                 };
 
                                 let border_stroke = if is_active {
-                                    Stroke::new(1.0, Color32::from_rgb(59, 130, 246))
+                                    Stroke::new(1.0, Color32::from_rgb(38, 48, 68))
                                 } else if is_hovered {
-                                    Stroke::new(1.0, Color32::from_rgb(38, 48, 70))
+                                    Stroke::new(1.0, Color32::from_rgb(26, 32, 44))
                                 } else {
-                                    Stroke::new(1.0, Color32::from_rgb(24, 29, 41))
+                                    Stroke::NONE
                                 };
 
                                 let painter = ui.painter();
                                 painter.rect(rect, Rounding::same(6.0), bg_color, border_stroke);
 
-                                let icon = "◈";
+                                let icon = "◇";
 
                                 // Draw icon
-                                let icon_pos = Pos2::new(rect.left() + 9.0, rect.center().y - 7.0);
+                                let icon_pos = Pos2::new(rect.left() + 9.0, rect.center().y - 6.0);
                                 painter.text(
                                     icon_pos,
                                     egui::Align2::LEFT_CENTER,
                                     icon,
-                                    egui::FontId::new(12.0, egui::FontFamily::Proportional),
-                                    Color32::from_rgb(148, 163, 184),
+                                    egui::FontId::new(11.0, egui::FontFamily::Proportional),
+                                    if is_active { Color32::from_rgb(96, 165, 250) } else { Color32::from_rgb(100, 116, 139) },
                                 );
 
                                 // Title text with strict boundary
-                                let text_pos = Pos2::new(rect.left() + 29.0, rect.center().y);
+                                let text_pos = Pos2::new(rect.left() + 26.0, rect.center().y);
                                 let text_color = if is_active {
                                     Color32::from_rgb(248, 250, 252)
                                 } else if is_hovered {
-                                    Color32::from_rgb(203, 213, 225)
+                                    Color32::from_rgb(226, 232, 240)
                                 } else {
                                     Color32::from_rgb(148, 163, 184)
                                 };
 
-                                let max_title_chars = ((total_w - 60.0) / 7.5).max(10.0) as usize;
+                                let max_title_chars = ((total_w - 56.0) / 7.2).max(10.0) as usize;
                                 let title_text = if sess.title.chars().count() > max_title_chars {
                                     format!(
                                         "{}...",
@@ -2312,13 +2312,13 @@ impl eframe::App for SiloApp {
                                         egui::FontId::new(10.0, egui::FontFamily::Proportional),
                                         Color32::from_rgb(248, 113, 113),
                                     );
-                                } else if is_hovered || is_active {
+                                } else if is_hovered {
                                     painter.text(
                                         del_rect.center(),
                                         egui::Align2::CENTER_CENTER,
                                         "×",
                                         egui::FontId::new(10.0, egui::FontFamily::Proportional),
-                                        Color32::from_rgb(100, 116, 139),
+                                        Color32::from_rgb(148, 163, 184),
                                     );
                                 }
 
@@ -2470,34 +2470,34 @@ impl eframe::App for SiloApp {
 
                                 ui.add_space(4.0);
 
-                                // Footer row: Quick Action Pills + Send Button
+                                // Footer row: Minimalist Action Pills + Send Button (Linear dark stealth)
                                 ui.horizontal(|ui| {
-                                    // Quick command pills
-                                    let pill = |ui: &mut egui::Ui, text: &str, border: Color32| -> egui::Response {
+                                    // Unified dark command pills
+                                    let pill = |ui: &mut egui::Ui, text: &str| -> egui::Response {
                                         ui.add(
-                                            egui::Button::new(RichText::new(text).color(Color32::from_rgb(226, 232, 240)).size(11.5))
-                                                .fill(Color32::from_rgb(20, 24, 34))
-                                                .stroke(Stroke::new(1.0, border))
-                                                .rounding(Rounding::same(6.0)),
+                                            egui::Button::new(RichText::new(text).color(Color32::from_rgb(148, 163, 184)).size(11.0))
+                                                .fill(Color32::from_rgb(18, 22, 30))
+                                                .stroke(Stroke::new(1.0, Color32::from_rgb(30, 36, 48)))
+                                                .rounding(Rounding::same(5.0)),
                                         )
                                     };
 
-                                    if pill(ui, "/deep", Color32::from_rgb(99, 102, 241)).clicked() {
+                                    if pill(ui, "/deep").clicked() {
                                         self.input_text = "/deep ".to_string();
                                     }
-                                    if pill(ui, "/skill", Color32::from_rgb(244, 63, 94)).on_hover_text("Execute installed agent skill script").clicked() {
+                                    if pill(ui, "/skill").on_hover_text("Execute installed agent skill script").clicked() {
                                         self.input_text = "/skill ".to_string();
                                     }
-                                    if pill(ui, "/calc", Color32::from_rgb(251, 191, 36)).clicked() {
+                                    if pill(ui, "/calc").clicked() {
                                         self.input_text = "/calc ".to_string();
                                     }
-                                    if pill(ui, "/run", Color32::from_rgb(52, 211, 153)).clicked() {
+                                    if pill(ui, "/run").clicked() {
                                         self.input_text = "/run ".to_string();
                                     }
-                                    if pill(ui, "Paste Image", Color32::from_rgb(168, 85, 247)).on_hover_text("Paste image from clipboard (Ctrl+V) or drag & drop files").clicked() {
+                                    if pill(ui, "Paste Image").on_hover_text("Paste image from clipboard (Ctrl+V) or drag & drop files").clicked() {
                                         self.paste_image_from_clipboard();
                                     }
-                                    if pill(ui, "Clear", Color32::from_rgb(75, 85, 99)).clicked() {
+                                    if pill(ui, "Clear").clicked() {
                                         if let Some(sess) = self.active_session_mut() {
                                             sess.messages.clear();
                                         }
@@ -2508,14 +2508,14 @@ impl eframe::App for SiloApp {
                                         let can_send = (!self.input_text.trim().is_empty() || !self.staged_images.is_empty()) && !self.is_generating;
                                         let send_btn = egui::Button::new(
                                             RichText::new("Send  ↵")
-                                                .color(if can_send { Color32::WHITE } else { Color32::from_rgb(120, 130, 150) })
+                                                .color(if can_send { Color32::WHITE } else { Color32::from_rgb(100, 116, 139) })
                                                 .strong()
-                                                .size(13.0),
+                                                .size(12.5),
                                         )
-                                        .fill(if can_send { Color32::from_rgb(37, 99, 235) } else { Color32::from_rgb(24, 30, 42) })
-                                        .stroke(Stroke::new(1.0, if can_send { Color32::from_rgb(59, 130, 246) } else { Color32::from_rgb(34, 42, 58) }))
-                                        .rounding(Rounding::same(8.0))
-                                        .min_size(Vec2::new(90.0, 28.0));
+                                        .fill(if can_send { Color32::from_rgb(30, 41, 59) } else { Color32::from_rgb(18, 22, 30) })
+                                        .stroke(Stroke::new(1.0, if can_send { Color32::from_rgb(71, 85, 105) } else { Color32::from_rgb(30, 38, 50) }))
+                                        .rounding(Rounding::same(7.0))
+                                        .min_size(Vec2::new(84.0, 26.0));
 
                                         if ui.add(send_btn).clicked() {
                                             self.send_message();
