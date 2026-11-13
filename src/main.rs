@@ -1,6 +1,7 @@
 mod app;
 mod engine;
 mod headless;
+mod mcp;
 mod runtime_env;
 mod session;
 mod ui_render;
@@ -11,6 +12,7 @@ use eframe::egui;
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    let is_mcp = args.iter().any(|a| a == "--mcp" || a == "-mcp");
     let is_headless = args.iter().any(|a| {
         a == "--headless"
             || a == "-h"
@@ -28,6 +30,11 @@ fn main() -> eframe::Result<()> {
         .enable_all()
         .build()
         .expect("Failed to initialize Tokio runtime");
+
+    if is_mcp {
+        rt.block_on(mcp::run_mcp_server());
+        return Ok(());
+    }
 
     if is_headless {
         rt.block_on(headless::run_headless(args));
