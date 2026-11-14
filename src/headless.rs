@@ -45,6 +45,7 @@ pub async fn run_headless(args: Vec<String>) {
     let mut deep_arg: Option<String> = None;
     let mut eval_arg: Option<String> = None;
     let mut model_arg: Option<String> = None;
+    let mut steps_arg: Option<usize> = None;
     let mut verbose = false;
     let mut test_tools = false;
 
@@ -56,6 +57,14 @@ pub async fn run_headless(args: Vec<String>) {
             }
             "--test-tools" | "-t" => {
                 test_tools = true;
+            }
+            "--steps" | "-s" => {
+                if i + 1 < args.len() {
+                    if let Ok(st) = args[i + 1].parse::<usize>() {
+                        steps_arg = Some(st);
+                    }
+                    i += 1;
+                }
             }
             "--prompt" | "-p" => {
                 if i + 1 < args.len() {
@@ -108,7 +117,7 @@ pub async fn run_headless(args: Vec<String>) {
     let topic_or_prompt = deep_arg.or(prompt_arg);
 
     if let Some(user_query) = topic_or_prompt {
-        run_agent_session(&user_query, is_deep, model_arg.as_deref(), verbose).await;
+        run_agent_session(&user_query, is_deep, model_arg.as_deref(), steps_arg, verbose).await;
     } else {
         print_help();
     }
@@ -370,6 +379,7 @@ pub async fn run_agent_session(
     query: &str,
     is_deep: bool,
     model_override: Option<&str>,
+    custom_steps: Option<usize>,
     verbose: bool,
 ) {
     let base_url = "http://127.0.0.1:1234";
@@ -411,8 +421,9 @@ pub async fn run_agent_session(
     }
     messages.push(ChatMessage::user(query));
 
-    let max_tool_steps = if is_deep { 12 } else { 6 };
-    let max_fetches = if is_deep { 6 } else { 2 };
+    let default_tool_steps = if is_deep { 12 } else { 6 };
+    let max_tool_steps = custom_steps.unwrap_or(default_tool_steps);
+    let max_fetches = if is_deep { max_tool_steps / 2 + 1 } else { 2 };
     let mut fetch_count = 0;
     let mut step = 0;
 
