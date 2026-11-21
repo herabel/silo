@@ -45,6 +45,8 @@ pub async fn run_headless(args: Vec<String>) {
     let mut deep_arg: Option<String> = None;
     let mut eval_arg: Option<String> = None;
     let mut model_arg: Option<String> = None;
+    let mut url_arg: Option<String> = None;
+    let mut ctx_arg: Option<usize> = None;
     let mut steps_arg: Option<usize> = None;
     let mut verbose = false;
     let mut test_tools = false;
@@ -58,10 +60,24 @@ pub async fn run_headless(args: Vec<String>) {
             "--test-tools" | "-t" => {
                 test_tools = true;
             }
+            "--url" | "-u" => {
+                if i + 1 < args.len() {
+                    url_arg = Some(args[i + 1].clone());
+                    i += 1;
+                }
+            }
             "--steps" | "-s" => {
                 if i + 1 < args.len() {
                     if let Ok(st) = args[i + 1].parse::<usize>() {
                         steps_arg = Some(st);
+                    }
+                    i += 1;
+                }
+            }
+            "--ctx" | "-c" | "--context" => {
+                if i + 1 < args.len() {
+                    if let Ok(c) = args[i + 1].parse::<usize>() {
+                        ctx_arg = Some(c);
                     }
                     i += 1;
                 }
@@ -100,7 +116,7 @@ pub async fn run_headless(args: Vec<String>) {
     }
 
     if test_tools {
-        run_tool_diagnostics().await;
+        run_tool_diagnostics(url_arg.as_deref()).await;
         return;
     }
 
@@ -117,7 +133,7 @@ pub async fn run_headless(args: Vec<String>) {
     let topic_or_prompt = deep_arg.or(prompt_arg);
 
     if let Some(user_query) = topic_or_prompt {
-        run_agent_session(&user_query, is_deep, model_arg.as_deref(), steps_arg, verbose).await;
+        run_agent_session(&user_query, is_deep, model_arg.as_deref(), url_arg.as_deref(), ctx_arg, steps_arg, verbose).await;
     } else {
         print_help();
     }
@@ -186,16 +202,29 @@ fn print_help() {
         "  silo.exe --headless --deep \"<topic>\"       Run autonomous multi-step deep research"
     );
     println!("  silo.exe --headless --model \"<model_id>\"   Override target model ID");
+    println!("  silo.exe --headless --ctx <tokens>         Override context window tokens (default: 16384)");
 }
 
-pub async fn run_tool_diagnostics() {
+pub async fn run_tool_diagnostics(server_url_override: Option<&str>) {
+    let config = crate::app::AppConfig::load();
+    let base_url_str = server_url_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            if config.server_url.is_empty() {
+                "http://127.0.0.1:11434".to_string()
+            } else {
+                config.server_url.clone()
+            }
+        });
+    let base_url = base_url_str.trim_end_matches('/');
+
     println!("==================================================");
     println!("       SILO — TOOL & PARSER DIAGNOSTICS SUITE     ");
     println!("==================================================");
 
-    // 1. LM Studio Connectivity & Models
-    print!("[1/7] Checking Inference Server (http://127.0.0.1:1234)... ");
-    let models = fetch_available_models("http://127.0.0.1:1234", None).await;
+    // 1. Inference Server Connectivity & Models
+    print!("[1/7] Checking Inference Server ({})... ", base_url);
+    let models = fetch_available_models(base_url, None).await;
     if models.is_empty() {
         println!("FAIL! (No models detected or server not running)");
     } else {
@@ -379,22 +408,40 @@ pub async fn run_agent_session(
     query: &str,
     is_deep: bool,
     model_override: Option<&str>,
+    server_url_override: Option<&str>,
+    ctx_override: Option<usize>,
     custom_steps: Option<usize>,
     verbose: bool,
 ) {
-    let base_url = "http://127.0.0.1:1234";
+    let ctx_window = ctx_override.unwrap_or(16384);
+    let max_output = (ctx_window / 4).clamp(1024, 4096);
+    let config = crate::app::AppConfig::load();
+    let base_url_str = server_url_override
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            if config.server_url.is_empty() {
+                "http://127.0.0.1:11434".to_string()
+            } else {
+                config.server_url.clone()
+            }
+        });
+    let base_url = base_url_str.trim_end_matches('/').to_string();
 
     // Detect model
     let model = if let Some(m) = model_override {
         m.to_string()
+    } else if !config.selected_model.is_empty() {
+        config.selected_model.clone()
     } else {
-        let models = fetch_available_models(base_url, None).await;
+        let models = fetch_available_models(&base_url, None).await;
         if let Some(loaded) = models.iter().find(|m| m.is_loaded) {
             loaded.id.clone()
+        } else if let Some(omni) = models.iter().find(|m| m.id.to_lowercase().contains("omnicoder")) {
+            omni.id.clone()
         } else if let Some(first) = models.first() {
             first.id.clone()
         } else {
-            "huihui-qwen3.8-27b-abliterated".to_string()
+            "omnicoder:latest".to_string()
         }
     };
 
@@ -473,17 +520,18 @@ pub async fn run_agent_session(
             None
         };
 
+        let base_url_clone = base_url.clone();
         tokio::spawn(async move {
             stream_completion(
-                base_url,
+                &base_url_clone,
                 None,
                 &model_clone,
                 &sys_prompt_clone,
                 &msgs_clone,
                 enable_tools,
                 forced_tool,
-                32768,
-                8192,
+                ctx_window,
+                max_output,
                 tx,
                 cancel_token,
             )
