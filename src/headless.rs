@@ -611,7 +611,7 @@ pub async fn run_agent_session(
         let content = if !final_content.is_empty() {
             final_content
         } else {
-            live_content
+            live_content.clone()
         };
 
         if !live_content.is_empty() && content.len() > live_content.len() {
