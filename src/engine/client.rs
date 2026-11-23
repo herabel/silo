@@ -1626,14 +1626,25 @@ pub async fn stream_completion(
 
     let payload_messages = governed_messages;
 
+    let is_inkling = model.to_lowercase().contains("inkling");
+    let (temperature, top_p, reasoning_effort) = if is_inkling {
+        (1.0, 1.0, Some(0.1))
+    } else {
+        (0.3, 0.9, None)
+    };
+
     let mut body = json!({
         "model": model,
         "messages": payload_messages,
-        "temperature": 0.3,
-        "top_p": 0.9,
+        "temperature": temperature,
+        "top_p": top_p,
         "max_tokens": max_output_tokens.max(256),
         "stream": true,
     });
+
+    if let Some(effort) = reasoning_effort {
+        body["reasoning_effort"] = json!(effort);
+    }
 
     if enable_tools {
         let tools = if let Some(tool_name) = &forced_tool {
