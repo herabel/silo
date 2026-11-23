@@ -562,7 +562,20 @@ pub async fn run_agent_session(
                 }
                 StreamUpdate::ToolDrafting(_) => {}
                 StreamUpdate::Payload(_) => {}
-                StreamUpdate::Telemetry { .. } => {}
+                StreamUpdate::Telemetry {
+                    ttft_ms,
+                    tps,
+                    prompt_tokens,
+                    completion_tokens,
+                } => {
+                    eprintln!(
+                        "\n📊 [Silo Telemetry] TTFT: {} ms | TPS: {:.2} tok/s | Prompt tok: {} | Completion tok: {}",
+                        ttft_ms,
+                        tps,
+                        prompt_tokens.map(|x| x.to_string()).unwrap_or_else(|| "N/A".to_string()),
+                        completion_tokens.map(|x| x.to_string()).unwrap_or_else(|| "N/A".to_string())
+                    );
+                }
                 StreamUpdate::Log(l) => {
                     if verbose {
                         eprintln!("[LOG] {}", l);
