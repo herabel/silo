@@ -1628,7 +1628,7 @@ pub async fn stream_completion(
 
     let is_inkling = model.to_lowercase().contains("inkling");
     let (temperature, top_p, reasoning_effort) = if is_inkling {
-        (1.0, 1.0, Some(0.1))
+        (1.0, 1.0, Some("low"))
     } else {
         (0.3, 0.9, None)
     };

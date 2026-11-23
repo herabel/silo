@@ -50,10 +50,14 @@ pub async fn run_headless(args: Vec<String>) {
     let mut steps_arg: Option<usize> = None;
     let mut verbose = false;
     let mut test_tools = false;
+    let mut no_tools = false;
 
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
+            "--no-tools" => {
+                no_tools = true;
+            }
             "--verbose" | "-v" => {
                 verbose = true;
             }
@@ -133,7 +137,7 @@ pub async fn run_headless(args: Vec<String>) {
     let topic_or_prompt = deep_arg.or(prompt_arg);
 
     if let Some(user_query) = topic_or_prompt {
-        run_agent_session(&user_query, is_deep, model_arg.as_deref(), url_arg.as_deref(), ctx_arg, steps_arg, verbose).await;
+        run_agent_session(&user_query, is_deep, model_arg.as_deref(), url_arg.as_deref(), ctx_arg, steps_arg, verbose, no_tools).await;
     } else {
         print_help();
     }
@@ -412,6 +416,7 @@ pub async fn run_agent_session(
     ctx_override: Option<usize>,
     custom_steps: Option<usize>,
     verbose: bool,
+    no_tools: bool,
 ) {
     let ctx_window = ctx_override.unwrap_or(16384);
     let max_output = (ctx_window / 4).clamp(1024, 4096);
@@ -477,7 +482,7 @@ pub async fn run_agent_session(
     while step <= max_tool_steps {
         step += 1;
         let is_synthesis_phase = is_deep && (step >= max_tool_steps || fetch_count >= max_fetches);
-        let enable_tools = !is_synthesis_phase;
+        let enable_tools = !no_tools && !is_synthesis_phase;
 
         if is_synthesis_phase && !messages.iter().any(|m| m.content.contains("[SYNTHESIS MANDATE]")) {
             println!(
