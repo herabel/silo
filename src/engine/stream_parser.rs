@@ -60,6 +60,7 @@ impl StreamParser {
                     if let Some(last_lt) = self.buffer.rfind('<') {
                         if !self.buffer[last_lt..].contains('>')
                             && (think_pos.is_none() && tool_starts.is_empty())
+                            && self.buffer[last_lt..].len() < 32
                         {
                             let clean = &self.buffer[..last_lt];
                             if !clean.is_empty() {
@@ -149,7 +150,7 @@ impl StreamParser {
                     } else {
                         // Avoid partial </think
                         if let Some(last_lt) = self.buffer.rfind('<') {
-                            if !self.buffer[last_lt..].contains('>') {
+                            if !self.buffer[last_lt..].contains('>') && self.buffer[last_lt..].len() < 32 {
                                 let safe = &self.buffer[..last_lt];
                                 if !safe.is_empty() {
                                     self.accumulated_thinking.push_str(safe);
@@ -204,6 +205,31 @@ impl StreamParser {
             }
         }
 
+        outputs
+    }
+
+    pub fn flush(&mut self) -> Vec<ParsedChunk> {
+        let mut outputs = Vec::new();
+        if !self.buffer.is_empty() {
+            match &self.state {
+                ParserState::Content => {
+                    let stripped = clean_tags(&self.buffer);
+                    if !stripped.is_empty() {
+                        self.accumulated_content.push_str(&stripped);
+                        outputs.push(ParsedChunk::Content(stripped));
+                    }
+                }
+                ParserState::Thinking => {
+                    self.accumulated_thinking.push_str(&self.buffer);
+                    outputs.push(ParsedChunk::Thinking(self.buffer.clone()));
+                }
+                ParserState::ToolDrafting { .. } => {
+                    self.accumulated_tool_draft.push_str(&self.buffer);
+                    outputs.push(ParsedChunk::ToolDraft(self.buffer.clone()));
+                }
+            }
+            self.buffer.clear();
+        }
         outputs
     }
 }

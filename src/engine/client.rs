@@ -1932,6 +1932,20 @@ pub async fn stream_completion(
         }
     }
 
+    for ev in stream_parser.flush() {
+        match ev {
+            ParsedChunk::Content(clean_txt) => {
+                let _ = tx.send(StreamUpdate::Token(clean_txt));
+            }
+            ParsedChunk::Thinking(think_txt) => {
+                let _ = tx.send(StreamUpdate::Thinking(think_txt));
+            }
+            ParsedChunk::ToolDraft(draft_txt) => {
+                let _ = tx.send(StreamUpdate::ToolDrafting(draft_txt));
+            }
+        }
+    }
+
     let elapsed = start_time.elapsed();
     let elapsed_ms = elapsed.as_millis();
     let total_tokens_emitted = usage_info

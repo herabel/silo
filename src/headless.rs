@@ -613,6 +613,14 @@ pub async fn run_agent_session(
         } else {
             live_content
         };
+
+        if !live_content.is_empty() && content.len() > live_content.len() {
+            print!("{}", &content[live_content.len()..]);
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        } else if live_content.is_empty() && !content.is_empty() {
+            println!("{}", content);
+        }
         let thinking = final_thinking.or(if !live_thinking.is_empty() {
             Some(live_thinking)
         } else {
