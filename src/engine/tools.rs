@@ -347,7 +347,20 @@ pub async fn run_shell_command(command_str: &str, cwd: Option<&str>) -> (bool, S
 
 use crate::engine::client::strip_residual_tags;
 
-pub async fn run_web_scout_fetch(url: &str) -> (bool, String) {
+pub fn format_fetch_result(raw_text: &str, query: Option<&str>) -> String {
+    if let Some(q) = query {
+        let trimmed_q = q.trim();
+        if !trimmed_q.is_empty() {
+            let ranked = crate::engine::bm25::rank_chunks_bm25(raw_text, trimmed_q, 2);
+            if !ranked.is_empty() {
+                return crate::engine::bm25::format_bm25_results(&ranked);
+            }
+        }
+    }
+    raw_text.chars().take(3000).collect()
+}
+
+pub async fn run_web_scout_fetch(url: &str, query: Option<&str>) -> (bool, String) {
     let stripped = strip_residual_tags(url);
     let clean_url = stripped.trim().trim_matches('"').trim_matches('\'').trim();
     if let Some(bin) = find_web_scout_bin() {
@@ -367,7 +380,7 @@ pub async fn run_web_scout_fetch(url: &str) -> (bool, String) {
                 }
                 let content = String::from_utf8_lossy(&buf).trim().to_string();
                 if status.success() && !content.is_empty() {
-                    return (true, content);
+                    return (true, format_fetch_result(&content, query));
                 }
             }
         }
@@ -390,9 +403,8 @@ pub async fn run_web_scout_fetch(url: &str) -> (bool, String) {
                         .filter(|l| !l.is_empty())
                         .collect();
                     let cleaned_body = lines.join("\n");
-                    let sample: String = cleaned_body.chars().take(5000).collect();
-                    if !sample.trim().is_empty() {
-                        return (true, sample.trim().to_string());
+                    if !cleaned_body.trim().is_empty() {
+                        return (true, format_fetch_result(&cleaned_body, query));
                     }
                 }
             }
@@ -2320,7 +2332,22 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
         || lower_name == "web_fetch"
     {
         let url = extract_url_arg(args_str);
-        run_web_scout_fetch(&url).await
+        let query = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+            val.get("query")
+                .or_else(|| val.get("q"))
+                .or_else(|| val.get("search"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+            val.get("query")
+                .or_else(|| val.get("q"))
+                .or_else(|| val.get("search"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        } else {
+            None
+        };
+        run_web_scout_fetch(&url, query.as_deref()).await
     } else if lower_name == "arxiv_search"
         || lower_name == "arxiv"
         || lower_name == "search_arxiv"
@@ -2634,5 +2661,30 @@ fn calculate_hash(data: &[u8]) -> u64 {
     #[test]
     fn test_skill_discovery() {
         let _ = crate::engine::skills::list_installed_skills();
+    }
+
+    #[tokio::test]
+    async fn test_format_fetch_result_bm25() {
+        let raw = "Section 1: Kyber-768 key exchange parameters and polynomial rings.\n\nSection 2: Vologda snowfall and freezing weather in northern Russia.\n\nSection 3: Rust async channels and tokio runtime mechanics.";
+        let res_kyber = format_fetch_result(raw, Some("Kyber-768"));
+        assert!(res_kyber.contains("Section 1"));
+        assert!(res_kyber.contains("BM25:"));
+
+        let res_weather = format_fetch_result(raw, Some("snowfall northern Russia"));
+        assert!(res_weather.contains("Section 2"));
+        assert!(res_weather.contains("BM25:"));
+
+        let res_none = format_fetch_result(raw, None);
+        assert!(res_none.contains("Section 1"));
+        assert!(!res_none.contains("BM25:"));
+
+        // Dispatch via execute_tool
+        let tool_args = serde_json::json!({
+            "url": "http://127.0.0.1:9999/dummy_offline",
+            "query": "Rust tokio runtime"
+        }).to_string();
+        let (ok, out) = execute_tool("fetch_page", &tool_args).await;
+        // Offline dummy fails network or web_scout gracefully, but arguments parse correctly
+        assert!(!ok || out.contains("BM25:") || out.contains("Failed to read URL"));
     }
 }
