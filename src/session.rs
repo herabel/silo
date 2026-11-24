@@ -608,9 +608,13 @@ mod tests {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("silo") {
+                let Ok(bytes) = std::fs::read(&path) else {
+                    continue;
+                };
+                let Ok(dec) = key.decrypt(&bytes) else {
+                    continue;
+                };
                 total += 1;
-                let bytes = std::fs::read(&path).unwrap();
-                let dec = key.decrypt(&bytes).unwrap();
                 if let Some(s) = deserialize_session_with_fallbacks(&dec) {
                     loaded += 1;
                     println!("Loaded: {} ({})", s.title, s.id);

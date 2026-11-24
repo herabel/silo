@@ -8,7 +8,12 @@ use tokio_util::sync::CancellationToken;
 
 const DEEP_RESEARCH_DIRECTIVE: &str = r#"DEEP RESEARCH DIRECTIVE:
 You are an investigative technical analyst and systems engineer conducting exhaustive, deep technical investigations.
-Follow this mandatory 4-Phase Research Protocol:
+Follow this mandatory Research Protocol:
+
+PHASE 0: RESEARCH AGENDA & HYPOTHESIS TRACKING (Step 1)
+- On your very first turn, invoke `scratchpad(action="set", content="...")` alongside your initial search to establish an explicit checklist of investigation angles (e.g. theoretical foundations, microarchitectural vectors, compiler pitfalls, adversarial contradictions).
+- As you investigate, update your scratchpad (`action="append"` or `"set"`) to check off completed areas and track emerging questions.
+- The scratchpad is 100% immune to context compaction and acts as your persistent agenda across 15-20 step investigations.
 
 PHASE 1: SCOUT & QUERY EXPANSION (Steps 1-3)
 - Execute multiple targeted `web_search` and `arxiv_search` queries across orthogonal dimensions:
@@ -163,7 +168,11 @@ fn format_headless_tool_instruction(
     };
 
     if tool_name == "scratchpad" || tool_name == "notes" || tool_name == "memo" {
-        format!("Scratchpad Content:\n{}\n\n[WORKING MEMORY UPDATED]: Your scratchpad is preserved and 100% immune to context compaction. Continue your plan or proceed to the next step.{}", out, suffix)
+        if is_deep {
+            format!("Scratchpad Content:\n{}\n\n[RESEARCH AGENDA UPDATED]: Your research plan is preserved and 100% immune to context compaction. Proceed to your next planned search, fetch, or verification step.{}", out, suffix)
+        } else {
+            format!("Scratchpad Content:\n{}\n\n[WORKING MEMORY UPDATED]: Your scratchpad is preserved and 100% immune to context compaction. Continue your plan or proceed to the next step.{}", out, suffix)
+        }
     } else if tool_name == "read_file" || tool_name == "read" {
         format!("File Content:\n{}\n\n[WORKING MEMORY & CODE PROTOCOL]: If this file contains critical types, function signatures, or line numbers you will reference later, log them into working memory via `scratchpad(action=\"append\", content=\"...\")` now so they remain available if context compacts. Proceed with the next step.{}", out, suffix)
     } else if tool_name == "search_files" || tool_name == "search_code" || tool_name == "grep" {
@@ -176,13 +185,13 @@ fn format_headless_tool_instruction(
         format!("Command Execution Result:\n{}\n\n[EXECUTION INSPECTION]: Review compiler/command output above. If errors exist, address them surgically. If clean, proceed with the task.{}", out, suffix)
     } else if tool_name == "arxiv_search" || tool_name == "arxiv" {
         if is_deep && *fetch_count < max_fetches {
-            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified technical papers retrieved. Extract concrete mechanisms, CVEs, or numbers and call `record_finding` to save them into working memory. If you need to verify math, call `execute_python`. If you need industry advisories, call `web_search` or `fetch_page`. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified technical papers retrieved. Extract concrete mechanisms, CVEs, or numbers via `record_finding`, and update your agenda via `scratchpad`. If you need to verify math, call `execute_python`. If you need industry advisories, call `web_search` or `fetch_page`. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
         } else {
             format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}", out, suffix)
         }
     } else if tool_name == "web_search" || tool_name == "search" {
         if is_deep && *fetch_count < max_fetches {
-            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select key URLs and call `fetch_page(url)` to read primary documents, or call `record_finding` to store facts into the research board. Search for opposing views or patch analyses to uncover contradictions. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
+            format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select key URLs and call `fetch_page(url)` to read primary documents, or record facts via `record_finding` and update your checklist via `scratchpad`. Search for opposing views or patch analyses to uncover contradictions. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
         } else {
             format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}", out, suffix)
         }

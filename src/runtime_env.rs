@@ -212,7 +212,7 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
             directives.push("- Context is precious and finite. Past tool outputs may be compacted to conserve active token budget.".to_string());
             directives.push("- The `scratchpad` is 100% immune to context compaction and is always retained in full fidelity.".to_string());
             directives.push("- NEVER rely on conversation history to remember exact line numbers, types, or function signatures. Commit them immediately to working memory using `scratchpad(action='append', content='...')` upon inspecting code.".to_string());
-            directives.push("- For multi-step tasks, write a numbered checklist to `scratchpad` on Step 1, then update/check off items as you complete them.".to_string());
+            directives.push("- For multi-step tasks (both code refactoring and deep research investigations), write a numbered checklist or research agenda to `scratchpad` on Step 1, then update/check off items as you complete them.".to_string());
             directives.push("- After modifying files with `edit_file` or `write_file`, ALWAYS run `run_command` with compiler checks (e.g. `cargo check` or `cargo test`) to verify changes before concluding.".to_string());
         } else {
             directives.push("4. PURE TEXT / REASONING MODE: Tools are disabled for this session. Provide complete, self-contained answers directly without invoking tool tags.".to_string());
