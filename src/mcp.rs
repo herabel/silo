@@ -246,6 +246,24 @@ fn get_mcp_tools() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "silo_fetch_arxiv_paper",
+            "description": "Fetch and ingest the full technical paper text from arXiv into the RAG Research Board using BM25 chunk ranking",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "paper_id": {
+                        "type": "string",
+                        "description": "arXiv paper ID (e.g. '2401.03185') or URL"
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Optional search query to rank and extract relevant sections via BM25"
+                    }
+                },
+                "required": ["paper_id"]
+            }
+        }),
+        json!({
             "name": "silo_web_search",
             "description": "Search the public web for technical documentation, issues, and advisories",
             "inputSchema": {
@@ -300,6 +318,13 @@ async fn handle_tool_call(name: &str, args: Value) -> String {
             let query = args.get("query").and_then(|q| q.as_str()).unwrap_or("");
             let args_json = json!({ "query": query }).to_string();
             let (_ok, out) = execute_tool("arxiv_search", &args_json).await;
+            out
+        }
+        "silo_fetch_arxiv_paper" => {
+            let paper_id = args.get("paper_id").and_then(|p| p.as_str()).unwrap_or("");
+            let query = args.get("query").and_then(|q| q.as_str());
+            let args_json = json!({ "paper_id": paper_id, "query": query }).to_string();
+            let (_ok, out) = execute_tool("fetch_arxiv_paper", &args_json).await;
             out
         }
         "silo_web_search" => {

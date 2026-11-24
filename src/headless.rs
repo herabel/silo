@@ -24,7 +24,8 @@ PHASE 1: SCOUT & QUERY EXPANSION (Steps 1-3)
 - Always use specific technical keywords (2-5 words). Avoid long conversational phrases in search queries.
 
 PHASE 2: DEEP INGESTION & EVIDENCE RECORDING (Steps 4-10)
-- Call `fetch_page(url)` on primary sources, official advisory sites, and papers.
+- Call `fetch_arxiv_paper(paper_id, query)` on target academic papers to ingest full text into RAG and extract exact theorems, algorithms, and numbers.
+- Call `fetch_page(url, query)` on primary sources, official advisory sites, and papers.
 - As soon as concrete findings, CVEs, mechanisms, or numbers are discovered, record them into the encrypted Research Board using `record_finding(source, claim, details, caveats, verified)`.
 - Use `execute_python` to verify equations, timing differences, parameter calculations, or algorithmic steps.
 
@@ -194,6 +195,13 @@ fn format_headless_tool_instruction(
             format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Review these results. Select key URLs and call `fetch_page(url)` to read primary documents, or record facts via `record_finding` and update your checklist via `scratchpad`. Search for opposing views or patch analyses to uncover contradictions. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
         } else {
             format!("Results:\n{}\n\n[INSTRUCTION]: Synthesize your final answer now.{}", out, suffix)
+        }
+    } else if tool_name == "fetch_arxiv_paper" || tool_name == "fetch_arxiv" || tool_name == "arxiv_paper" {
+        *fetch_count += 1;
+        if is_deep && *fetch_count < max_fetches {
+            format!("Full arXiv Paper Ingestion:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Academic paper ingested into RAG [{}/{}]. Review the extracted theorems/mechanisms above, record specific claims via `record_finding`, or investigate contradictions. You have {} page reads remaining.{}", out, *fetch_count, max_fetches, max_fetches.saturating_sub(*fetch_count), suffix)
+        } else {
+            format!("Full arXiv Paper Ingestion:\n{}\n\n[INSTRUCTION]: Paper read [{}/{}]. Synthesize your final comprehensive dossier using the accumulated research board.{}", out, *fetch_count, max_fetches, suffix)
         }
     } else if tool_name == "fetch_page" || tool_name == "fetch" {
         *fetch_count += 1;

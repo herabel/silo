@@ -196,6 +196,10 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
                 "- `arxiv_search(query, limit)`: Search peer-reviewed and preprint scientific papers on arXiv (Computer Science, AI, Cryptography, Math, Systems, Security). Returns titles, authors, dates, and full abstracts."
                     .to_string(),
             );
+            directives.push(
+                "- `fetch_arxiv_paper(paper_id, query)`: Fetch and ingest the full technical paper text from arXiv into the RAG Research Board. Performs in-memory BM25 chunk ranking to extract relevant theorems, algorithms, or sections. Accepts paper ID (e.g. '2401.03185') or URL."
+                    .to_string(),
+            );
             directives
                 .push("- `fetch_page(url, query)`: Read webpage or paper markdown content. When 'query' is provided, performs deterministic in-memory BM25 chunk ranking (RAG) and returns top relevant chunks.".to_string());
 

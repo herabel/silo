@@ -99,7 +99,8 @@ PHASE 1: SCOUT & QUERY EXPANSION (Steps 1-3)
 - Always use specific technical keywords (2-5 words). Avoid long conversational phrases in search queries.
 
 PHASE 2: DEEP INGESTION & EVIDENCE RECORDING (Steps 4-10)
-- Call `fetch_page(url)` on primary sources, official advisory sites, and papers.
+- Call `fetch_arxiv_paper(paper_id, query)` on target academic papers to ingest full text into RAG and extract exact theorems, algorithms, and numbers.
+- Call `fetch_page(url, query)` on primary sources, official advisory sites, and papers.
 - As soon as concrete findings, CVEs, mechanisms, or numbers are discovered, record them into the encrypted Research Board using `record_finding(source, claim, details, caveats, verified)`.
 - Use `execute_python` to verify equations, timing differences, parameter calculations, or algorithmic steps.
 
@@ -1425,6 +1426,13 @@ impl SiloApp {
                     effective_output, suffix
                 )
             }
+        } else if tool_name == "fetch_arxiv_paper" || tool_name == "fetch_arxiv" || tool_name == "arxiv_paper" {
+            self.deep_fetch_count += 1;
+            if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
+                format!("Full arXiv Paper Ingestion:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Academic paper ingested into RAG [{}/{}]. Review the extracted theorems/mechanisms above, record specific claims via `record_finding`, or investigate contradictions. You have {} page reads remaining.{}", effective_output, self.deep_fetch_count, MAX_DEEP_FETCHES, MAX_DEEP_FETCHES.saturating_sub(self.deep_fetch_count), suffix)
+            } else {
+                format!("Full arXiv Paper Ingestion:\n{}\n\n[INSTRUCTION]: Paper read [{}/{}]. Synthesize your final comprehensive dossier using the accumulated research board.{}", effective_output, self.deep_fetch_count, MAX_DEEP_FETCHES, suffix)
+            }
         } else if tool_name == "fetch_page" || tool_name == "fetch" {
             self.deep_fetch_count += 1;
             if self.is_deep_active && self.deep_fetch_count < MAX_DEEP_FETCHES {
@@ -1553,6 +1561,7 @@ fn summarize_tool_call(tc: &ToolCallRecord) -> (String, String) {
         "run_command" => "Ran command",
         "web_search" => "Web search",
         "arxiv_search" | "arxiv" => "arXiv search",
+        "fetch_arxiv_paper" | "fetch_arxiv" | "arxiv_paper" => "arXiv full paper",
         "fetch_page" | "fetch" => "Fetched",
         "run_skill" | "skill" => "Ran skill",
         _ => "Ran",

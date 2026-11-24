@@ -121,7 +121,8 @@ pub fn compact_tool_output(
     }
 
     // 4. Extended semantic protection for research evidence (arXiv papers & fetched page extracts)
-    if (lower_tool == "arxiv_search" || lower_tool == "arxiv" || lower_tool == "search_arxiv") && age <= 3 {
+    if (lower_tool == "arxiv_search" || lower_tool == "arxiv" || lower_tool == "search_arxiv"
+        || lower_tool == "fetch_arxiv_paper" || lower_tool == "fetch_arxiv" || lower_tool == "arxiv_paper") && age <= 3 {
         if char_count <= 3500 {
             return cleaned_content;
         }

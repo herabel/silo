@@ -282,6 +282,7 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         "runcommand" | "cmd" | "bash" | "shell" => "run_command",
         "websearch" | "search" | "duckduckgosearch" | "googlesearch" => "web_search",
         "arxivsearch" | "arxiv" | "searcharxiv" => "arxiv_search",
+        "fetcharxivpaper" | "fetcharxiv" | "arxivpaper" | "readarxivpaper" => "fetch_arxiv_paper",
         "fetchpage" | "fetch" => "fetch_page",
         "runskill" | "skill" => "run_skill",
         _ => tool_name,
@@ -363,6 +364,11 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                             obj.insert("query".to_string(), inp);
                         }
                     }
+                    "fetch_arxiv_paper" => {
+                        if !obj.contains_key("paper_id") && !obj.contains_key("id") && !obj.contains_key("url") {
+                            obj.insert("paper_id".to_string(), inp);
+                        }
+                    }
                     "fetch_page" => {
                         if !obj.contains_key("url") {
                             obj.insert("url".to_string(), inp);
@@ -432,6 +438,11 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                     "web_search" | "arxiv_search" => {
                         if !obj.contains_key("query") {
                             obj.insert("query".to_string(), inp);
+                        }
+                    }
+                    "fetch_arxiv_paper" => {
+                        if !obj.contains_key("paper_id") && !obj.contains_key("id") && !obj.contains_key("url") {
+                            obj.insert("paper_id".to_string(), inp);
                         }
                     }
                     "fetch_page" => {
@@ -618,6 +629,11 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
                                 kv_map.insert("query".to_string(), inp);
                             }
                         }
+                        "fetch_arxiv_paper" => {
+                            if !kv_map.contains_key("paper_id") && !kv_map.contains_key("id") && !kv_map.contains_key("url") {
+                                kv_map.insert("paper_id".to_string(), inp);
+                            }
+                        }
                         "fetch_page" => {
                             if !kv_map.contains_key("url") {
                                 kv_map.insert("url".to_string(), inp);
@@ -663,6 +679,9 @@ pub fn clean_and_normalize_tool_arguments(tool_name: &str, raw_args: &str) -> St
         }
         "web_search" | "arxiv_search" => {
             fallback_map.insert("query".to_string(), Value::String(clean_str));
+        }
+        "fetch_arxiv_paper" => {
+            fallback_map.insert("paper_id".to_string(), Value::String(clean_str));
         }
         "fetch_page" => {
             fallback_map.insert("url".to_string(), Value::String(clean_str));
@@ -739,6 +758,9 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
         "websearch",
         "arxiv_search",
         "arxiv",
+        "fetch_arxiv_paper",
+        "fetcharxivpaper",
+        "arxiv_paper",
         "fetch_page",
         "fetchpage",
         "record_finding",
@@ -770,6 +792,7 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                 "runcommand" | "cmd" | "bash" => "run_command",
                 "websearch" => "web_search",
                 "arxivsearch" | "arxiv" => "arxiv_search",
+                "fetcharxivpaper" | "arxivpaper" => "fetch_arxiv_paper",
                 "fetchpage" => "fetch_page",
                 _ => tool_tag,
             }
@@ -790,7 +813,7 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
 
     // Format 0: Function call with parens e.g. <function=web_search(query: "...") or web_search(query="...") inside <tool_call>
     if let Ok(fn_call_re) = Regex::new(
-        r#"(?s)(?:<function=|\b)(arxiv_search|arxiv|search_arxiv|web_search|search|fetch_page|fetch|execute_python|python|run_command|cmd|read_file|read|write_file|write|list_dir|ls|dir|search_files|grep|search_code)\s*\((.*?)\)(?:>|\s*</parameter>|\s*</function>|\s*</tool_call>|$)"#,
+        r#"(?s)(?:<function=|\b)(fetch_arxiv_paper|fetch_arxiv|arxiv_paper|arxiv_search|arxiv|search_arxiv|web_search|search|fetch_page|fetch|execute_python|python|run_command|cmd|read_file|read|write_file|write|list_dir|ls|dir|search_files|grep|search_code)\s*\((.*?)\)(?:>|\s*</parameter>|\s*</function>|\s*</tool_call>|$)"#,
     ) {
         for cap in fn_call_re.captures_iter(text) {
             let fn_name = cap[1].to_string();
@@ -798,6 +821,7 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
             let norm_name = match fn_name.as_str() {
                 "search" => "web_search",
                 "arxiv" | "search_arxiv" => "arxiv_search",
+                "fetch_arxiv" | "arxiv_paper" => "fetch_arxiv_paper",
                 "fetch" => "fetch_page",
                 "python" => "execute_python",
                 "cmd" => "run_command",
@@ -883,6 +907,8 @@ pub fn extract_text_tool_calls(text: &str) -> Vec<ToolCallInfo> {
                         args["cmd"] = Value::String(body_str);
                     } else if fn_name == "web_search" || fn_name == "arxiv_search" || fn_name == "arxiv" {
                         args["query"] = Value::String(body_str);
+                    } else if fn_name == "fetch_arxiv_paper" || fn_name == "fetch_arxiv" || fn_name == "arxiv_paper" {
+                        args["paper_id"] = Value::String(body_str);
                     } else if fn_name == "fetch_page" {
                         args["url"] = Value::String(body_str);
                     }
@@ -1077,6 +1103,9 @@ pub fn strip_tool_tags(text: &str) -> String {
         "websearch",
         "arxiv_search",
         "arxiv",
+        "fetch_arxiv_paper",
+        "fetcharxivpaper",
+        "arxiv_paper",
         "fetch_page",
         "fetchpage",
         "record_finding",
@@ -1245,6 +1274,21 @@ pub fn build_tool_definitions() -> Vec<Value> {
                         "limit": {"type": "integer", "description": "Number of papers to retrieve (default: 4, max: 10)"}
                     },
                     "required": ["query"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
+                "name": "fetch_arxiv_paper",
+                "description": "Fetches and ingests the full technical text of an academic paper from arXiv into the RAG Research Board. When 'query' is provided, performs in-memory BM25 chunk ranking to extract the most relevant theorems, algorithms, or experimental sections. Accepts an arXiv ID (e.g. '2401.03185' or '2401.03185v1') or an arXiv URL.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "paper_id": {"type": "string", "description": "arXiv ID (e.g. '2401.03185') or URL (e.g. 'https://arxiv.org/abs/2401.03185')"},
+                        "query": {"type": "string", "description": "Optional search query to rank and extract relevant sections via BM25 (e.g. 'timing leakage division algorithm' or 'proof of security')"}
+                    },
+                    "required": ["paper_id"]
                 }
             }
         }),
