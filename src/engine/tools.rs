@@ -6,6 +6,37 @@ use std::time::{SystemTime, UNIX_EPOCH};
 static DDG_LAST_FAILURE: AtomicI64 = AtomicI64::new(0);
 static DDG_BACKOFF_SECS: AtomicU32 = AtomicU32::new(30);
 
+static ACTIVE_SCRATCHPAD: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+pub async fn run_scratchpad(action: &str, content: &str) -> (bool, String) {
+    let mut buf = ACTIVE_SCRATCHPAD.write().unwrap();
+    match action {
+        "read" => {
+            if buf.is_empty() {
+                (true, "(Scratchpad is empty)".to_string())
+            } else {
+                (true, buf.clone())
+            }
+        }
+        "append" => {
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(content);
+            (true, format!("Appended. Scratchpad now holds {} bytes.", buf.len()))
+        }
+        "set" => {
+            *buf = content.to_string();
+            (true, format!("Scratchpad set. Holds {} bytes.", buf.len()))
+        }
+        "clear" => {
+            buf.clear();
+            (true, "Scratchpad cleared.".to_string())
+        }
+        _ => (false, format!("Unknown scratchpad action: {}", action)),
+    }
+}
+
 pub fn is_ddg_available() -> bool {
     let now = match SystemTime::now().duration_since(UNIX_EPOCH) {
         Ok(d) => d.as_secs() as i64,
@@ -2387,6 +2418,23 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
         } else {
             crate::engine::skills::run_skill_script(&skill, &script, &args).await
         }
+    } else if lower_name == "scratchpad"
+        || lower_name == "notes"
+        || lower_name == "memo"
+        || lower_name == "pad"
+    {
+        let (action, content) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+            let a = val.get("action").and_then(|v| v.as_str()).unwrap_or("read").to_string();
+            let c = val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            (a, c)
+        } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+            let a = val.get("action").and_then(|v| v.as_str()).unwrap_or("read").to_string();
+            let c = val.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            (a, c)
+        } else {
+            ("read".to_string(), args_str.to_string())
+        };
+        run_scratchpad(&action, &content).await
     } else {
         (false, format!("Unknown tool: {}", name))
     }
@@ -2395,6 +2443,36 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_scratchpad_lifecycle() {
+        let _ = run_scratchpad("clear", "").await;
+        let (ok, _) = run_scratchpad("append", "line one").await;
+        assert!(ok);
+        let (ok, _) = run_scratchpad("append", "line two").await;
+        assert!(ok);
+        let (ok, res) = run_scratchpad("read", "").await;
+        assert!(ok);
+        assert!(res.contains("line one"));
+        assert!(res.contains("line two"));
+        let (ok, _) = run_scratchpad("set", "overwritten").await;
+        assert!(ok);
+        let (ok, res) = run_scratchpad("read", "").await;
+        assert!(ok);
+        assert_eq!(res, "overwritten");
+        let (ok, _) = run_scratchpad("clear", "").await;
+        assert!(ok);
+        let (ok, res) = run_scratchpad("read", "").await;
+        assert!(ok);
+        assert_eq!(res, "(Scratchpad is empty)");
+        // execute_tool dispatch
+        let (ok, msg) = execute_tool("scratchpad", "{\"action\":\"set\",\"content\":\"via tool\"}").await;
+        assert!(ok, "{}", msg);
+        let (ok, msg) = execute_tool("notes", "{\"action\":\"read\"}").await;
+        assert!(ok);
+        assert_eq!(msg, "via tool");
+        let _ = run_scratchpad("clear", "").await;
+    }
 
     #[tokio::test]
     async fn test_native_search() {
@@ -2436,6 +2514,8 @@ mod tests {
         assert!(!is_read_only_tool("edit_file"));
         assert!(!is_read_only_tool("edit"));
         assert!(!is_read_only_tool("patch"));
+        assert!(!is_read_only_tool("scratchpad"));
+        assert!(!is_read_only_tool("notes"));
         assert!(!is_read_only_tool("run_command"));
         assert!(!is_read_only_tool("run_skill"));
     }
