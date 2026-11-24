@@ -364,13 +364,13 @@ pub fn format_fetch_result(raw_text: &str, query: Option<&str>) -> String {
     if let Some(q) = query {
         let trimmed_q = q.trim();
         if !trimmed_q.is_empty() {
-            let ranked = crate::engine::bm25::rank_chunks_bm25(raw_text, trimmed_q, 2);
+            let ranked = crate::engine::bm25::rank_chunks_bm25(raw_text, trimmed_q, 3);
             if !ranked.is_empty() {
                 return crate::engine::bm25::format_bm25_results(&ranked);
             }
         }
     }
-    raw_text.chars().take(3000).collect()
+    raw_text.chars().take(3500).collect()
 }
 
 pub async fn run_web_scout_fetch(url: &str, query: Option<&str>) -> (bool, String) {
@@ -378,7 +378,7 @@ pub async fn run_web_scout_fetch(url: &str, query: Option<&str>) -> (bool, Strin
     let clean_url = stripped.trim().trim_matches('"').trim_matches('\'').trim();
     if let Some(bin) = find_web_scout_bin() {
         let mut cmd = Command::new(bin);
-        cmd.arg("fetch").arg(clean_url).arg("5000");
+        cmd.arg("fetch").arg(clean_url).arg("60000");
         #[cfg(windows)]
         {
             cmd.creation_flags(0x08000000);

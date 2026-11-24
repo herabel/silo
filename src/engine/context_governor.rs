@@ -120,7 +120,33 @@ pub fn compact_tool_output(
         return cleaned_content;
     }
 
-    // 4. General semantic protection for short, dense outputs (<= 600 chars)
+    // 4. Extended semantic protection for research evidence (arXiv papers & fetched page extracts)
+    if (lower_tool == "arxiv_search" || lower_tool == "arxiv" || lower_tool == "search_arxiv") && age <= 3 {
+        if char_count <= 3500 {
+            return cleaned_content;
+        }
+        let take_len = 3500usize.saturating_sub(60);
+        let head: String = cleaned_content.chars().take(take_len).collect();
+        return format!(
+            "{}\n[... {} chars truncated to fit active context budget ...]",
+            head,
+            char_count.saturating_sub(head.chars().count())
+        );
+    }
+    if (lower_tool == "fetch_page" || lower_tool == "fetch") && age <= 2 {
+        if char_count <= 3500 {
+            return cleaned_content;
+        }
+        let take_len = 3500usize.saturating_sub(60);
+        let head: String = cleaned_content.chars().take(take_len).collect();
+        return format!(
+            "{}\n[... {} chars truncated to fit active context budget ...]",
+            head,
+            char_count.saturating_sub(head.chars().count())
+        );
+    }
+
+    // 5. General semantic protection for short, dense outputs (<= 600 chars)
     if char_count <= 600 && age <= 4 {
         return cleaned_content;
     }
@@ -519,6 +545,18 @@ mod tests {
         let cleaned = compact_tool_output(compiler_spam, "run_command", 0, &budget);
         assert!(cleaned.contains("test result: ok"));
         assert!(cleaned.contains("repetitive compiler warnings filtered"));
+
+        // Arxiv search immunity test: up to 3500 chars at age 3 is preserved without warm crushing
+        let arxiv_sample = "### [1] Post-Quantum Lattices\nAbstract: Analysis of Kyber\n".repeat(40);
+        let arxiv_cut = arxiv_sample.chars().take(2800).collect::<String>();
+        let arxiv_governed = compact_tool_output(&arxiv_cut, "arxiv_search", 3, &budget);
+        assert_eq!(arxiv_governed, arxiv_cut);
+
+        // Fetch page immunity test: up to 3500 chars at age 2 is preserved
+        let fetch_sample = "RFC 9180: Hybrid Public Key Encryption\nDetails on KEM...\n".repeat(40);
+        let fetch_cut = fetch_sample.chars().take(2800).collect::<String>();
+        let fetch_governed = compact_tool_output(&fetch_cut, "fetch_page", 2, &budget);
+        assert_eq!(fetch_governed, fetch_cut);
     }
 
     #[test]

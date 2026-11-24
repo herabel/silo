@@ -305,6 +305,50 @@ mod tests {
         assert_eq!(restored.contradictions.len(), 1);
         assert_eq!(restored.findings[0].claim, "KyberSlash timing attack");
     }
+
+    #[test]
+    fn test_auto_ingest_arxiv_multiple_distinct_entries() {
+        init_global_research_board("Post-Quantum Cryptography Test");
+        let arxiv_feed = r#"Found 2 peer-reviewed/preprint papers on arXiv for 'Kyber':
+
+### [1] KyberSlash: Simple Non-Constant Time Attacks on Kyber
+- **arXiv ID:** `2401.03185` | **Published:** 2024-01-05
+- **Authors:** Daniel J. Bernstein, et al.
+- **URL:** http://arxiv.org/abs/2401.03185v1
+- **Abstract:**
+Kyber is a key encapsulation mechanism designed to resist quantum adversaries.
+
+---
+
+### [2] Practical Fault Attacks on ML-KEM
+- **arXiv ID:** `2402.12345` | **Published:** 2024-02-10
+- **Authors:** Alice Smith, Bob Jones
+- **URL:** http://arxiv.org/abs/2402.12345v1
+- **Abstract:**
+We present practical laser fault injection against NTT polynomial multiplication.
+"#;
+        auto_ingest_search_results(arxiv_feed);
+        let dossier = get_global_evidence_dossier();
+        assert!(dossier.contains("KyberSlash: Simple Non-Constant Time Attacks on Kyber"));
+        assert!(dossier.contains("Practical Fault Attacks on ML-KEM"));
+        assert!(dossier.contains("http://arxiv.org/abs/2401.03185v1"));
+        assert!(dossier.contains("http://arxiv.org/abs/2402.12345v1"));
+        assert!(dossier.contains("Kyber is a key encapsulation mechanism"));
+        assert!(dossier.contains("practical laser fault injection"));
+    }
+
+    #[test]
+    fn test_auto_ingest_page_fetch_expanded_sample() {
+        init_global_research_board("Page Fetch Sampling Test");
+        let long_page = "Section: Cryptographic Implementation Notes. ".repeat(80); // ~3680 chars
+        assert!(long_page.len() > 3000);
+        auto_ingest_page_fetch(r#"{"url":"https://example.org/spec"}"#, &long_page);
+        let dossier = get_global_evidence_dossier();
+        assert!(dossier.contains("https://example.org/spec"));
+        assert!(dossier.contains("Primary Source Document Read"));
+        // Check that at least 2500 chars were retained (well beyond the old 800 char limit)
+        assert!(dossier.len() >= 2500);
+    }
 }
 
 
@@ -327,33 +371,42 @@ pub fn auto_ingest_search_results(raw_out: &str) {
             }
         }
     } else if raw_out.contains("### [") {
-        if let Ok(title_re) = regex::Regex::new(r"### \[\d+\] (.*?)\n") {
-            let url_re = regex::Regex::new(r"- \*\*URL:\*\* (.*?)\n").ok();
-            let abs_re = regex::Regex::new(r"(?s)- \*\*Abstract:\*\*\n(.*?)(?:\n---|\n###|$)").ok();
+        let title_re = regex::Regex::new(r"### \[\d+\] (.*?)(?:\r?\n|$)").ok();
+        let url_re = regex::Regex::new(r"- \*\*URL:\*\* (.*?)(?:\r?\n|$)").ok();
+        let abs_re = regex::Regex::new(r"(?s)- \*\*Abstract:\*\*\s*(.*?)(?:\r?\n---|\r?\n###|$)").ok();
 
-            for cap in title_re.captures_iter(raw_out) {
-                let title = cap.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-                let url = url_re
-                    .as_ref()
-                    .and_then(|r| r.captures(raw_out))
-                    .and_then(|c| c.get(1))
-                    .map(|m| m.as_str().trim())
-                    .unwrap_or("arXiv");
-                let summary = abs_re
-                    .as_ref()
-                    .and_then(|r| r.captures(raw_out))
-                    .and_then(|c| c.get(1))
-                    .map(|m| m.as_str().trim())
-                    .unwrap_or("");
-                if !title.is_empty() {
-                    let _ = record_finding_to_global_board(
-                        url,
-                        title,
-                        summary,
-                        None,
-                        true,
-                    );
-                }
+        for section in raw_out.split("\n---") {
+            let trimmed = section.trim();
+            if !trimmed.contains("### [") {
+                continue;
+            }
+            let title = title_re
+                .as_ref()
+                .and_then(|r| r.captures(trimmed))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim())
+                .unwrap_or("");
+            let url = url_re
+                .as_ref()
+                .and_then(|r| r.captures(trimmed))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim())
+                .unwrap_or("arXiv");
+            let summary = abs_re
+                .as_ref()
+                .and_then(|r| r.captures(trimmed))
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().trim())
+                .unwrap_or("");
+
+            if !title.is_empty() {
+                let _ = record_finding_to_global_board(
+                    url,
+                    title,
+                    summary,
+                    None,
+                    true,
+                );
             }
         }
     }
@@ -361,7 +414,7 @@ pub fn auto_ingest_search_results(raw_out: &str) {
 
 pub fn auto_ingest_page_fetch(args_str: &str, page_content: &str) {
     let url = crate::engine::tools::extract_url_arg(args_str);
-    let sample: String = page_content.chars().take(800).collect();
+    let sample: String = page_content.chars().take(3000).collect();
     if !sample.trim().is_empty() {
         let _ = record_finding_to_global_board(
             &url,
