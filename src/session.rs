@@ -601,7 +601,11 @@ mod tests {
         let mut total = 0;
         let mut loaded = 0;
 
-        for entry in std::fs::read_dir("sessions").unwrap().flatten() {
+        let Ok(entries) = std::fs::read_dir("sessions") else {
+            return;
+        };
+
+        for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().and_then(|s| s.to_str()) == Some("silo") {
                 total += 1;

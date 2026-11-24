@@ -51,14 +51,78 @@ impl ContextBudget {
     }
 }
 
-/// Compact tool output based on its recency (age in completed tool turns) and the context budget.
-pub fn compact_tool_output(content: &str, age: usize, budget: &ContextBudget) -> String {
-    let char_count = content.chars().count();
+/// Filter out repetitive compiler warning noise (e.g. egui float fallback warnings)
+/// while strictly preserving errors, test results, and compiler status.
+fn filter_compiler_noise(raw: &str) -> String {
+    let mut kept_lines: Vec<String> = Vec::new();
+    let mut skip_warning = false;
+    let mut warning_count = 0usize;
 
-    // Semantic protection: short, dense outputs (<= 600 chars, like search_files,
-    // grep hits, git status, scratchpad) are critical reference anchors and should never be crushed.
-    if char_count <= 600 && age <= 4 {
+    for line in raw.lines() {
+        if line.starts_with("warning: falling back to `f32`") {
+            skip_warning = true;
+            warning_count += 1;
+            continue;
+        }
+        if skip_warning {
+            if line.starts_with("warning:")
+                || line.starts_with("error")
+                || line.starts_with("   Compiling")
+                || line.starts_with("test ")
+                || line.starts_with("running ")
+                || line.starts_with("Finished")
+            {
+                skip_warning = false;
+            } else {
+                continue;
+            }
+        }
+        kept_lines.push(line.to_string());
+    }
+
+    if warning_count > 0 {
+        kept_lines.insert(
+            0,
+            format!("[Note: {} repetitive compiler warnings filtered]", warning_count),
+        );
+    }
+
+    kept_lines.join("\n")
+}
+
+/// Compact tool output based on tool-aware semantics, recency, and context budget.
+pub fn compact_tool_output(
+    content: &str,
+    tool_name: &str,
+    age: usize,
+    budget: &ContextBudget,
+) -> String {
+    let lower_tool = tool_name.to_lowercase();
+
+    // 1. Absolute immunity for working memory: scratchpad is NEVER compacted.
+    if lower_tool == "scratchpad" || lower_tool == "notes" || lower_tool == "memo" {
         return content.to_string();
+    }
+
+    // 2. Pre-filter repetitive compiler warning noise for command runs
+    let cleaned_content = if lower_tool == "run_command" && content.contains("warning: falling back to `f32`") {
+        filter_compiler_noise(content)
+    } else {
+        content.to_string()
+    };
+    let char_count = cleaned_content.chars().count();
+
+    // 3. High immunity for search indexing & directory listings (up to 1200 chars)
+    if (lower_tool == "search_files" || lower_tool == "list_dir" || lower_tool == "git_status")
+        && char_count <= 1200
+        && age <= 4
+    {
+        return cleaned_content;
+    }
+
+    // 4. General semantic protection for short, dense outputs (<= 600 chars)
+    if char_count <= 600 && age <= 4 {
+        return cleaned_content;
     }
 
     let target_cap = if age <= 1 {
@@ -70,13 +134,13 @@ pub fn compact_tool_output(content: &str, age: usize, budget: &ContextBudget) ->
     };
 
     if char_count <= target_cap {
-        return content.to_string();
+        return cleaned_content;
     }
 
     if age <= 1 {
         // Hot turn: retain head up to target_cap
         let take_len = target_cap.saturating_sub(60).max(100);
-        let head: String = content.chars().take(take_len).collect();
+        let head: String = cleaned_content.chars().take(take_len).collect();
         format!(
             "{}\n[... {} chars truncated to fit active context budget ...]",
             head,
@@ -87,8 +151,8 @@ pub fn compact_tool_output(content: &str, age: usize, budget: &ContextBudget) ->
         let effective_cap = target_cap.saturating_sub(60);
         let head_len = (effective_cap * 6) / 10;
         let tail_len = (effective_cap * 4) / 10;
-        let head: String = content.chars().take(head_len).collect();
-        let tail: String = content
+        let head: String = cleaned_content.chars().take(head_len).collect();
+        let tail: String = cleaned_content
             .chars()
             .skip(char_count.saturating_sub(tail_len))
             .collect();
@@ -98,10 +162,10 @@ pub fn compact_tool_output(content: &str, age: usize, budget: &ContextBudget) ->
             head, omitted, tail
         )
     } else {
-        // Cold turn: compact to 3 preview lines + reminder to check scratchpad
-        let preview: String = content
+        // Cold turn: compact to 3-4 preview lines + reminder to check scratchpad
+        let preview: String = cleaned_content
             .lines()
-            .take(3)
+            .take(4)
             .collect::<Vec<&str>>()
             .join("\n");
         let preview_cut: String = preview.chars().take(target_cap.saturating_sub(80)).collect();
@@ -263,10 +327,22 @@ pub fn build_governed_payload_messages(
                 let tool_pos = tool_indices.iter().position(|&i| i == idx).unwrap_or(0);
                 let age = total_tools.saturating_sub(1 + tool_pos);
 
+                // Find tool name from preceding assistant messages matching call_id
+                let tool_name = messages
+                    .iter()
+                    .filter_map(|msg| {
+                        msg.tool_calls
+                            .iter()
+                            .find(|tc| tc.id == call_id)
+                            .map(|tc| tc.name.as_str())
+                    })
+                    .next()
+                    .unwrap_or("unknown");
+
                 let compacted = if watermark_triggered {
-                    compact_tool_output(&m.content, age, &budget)
+                    compact_tool_output(&m.content, tool_name, age, &budget)
                 } else if m.content.chars().count() > budget.hot_tool_cap {
-                    compact_tool_output(&m.content, 0, &budget)
+                    compact_tool_output(&m.content, tool_name, 0, &budget)
                 } else {
                     m.content.clone()
                 };
@@ -394,19 +470,36 @@ mod tests {
         assert!(sample.len() > 3000);
 
         // Hot turn (age 0): up to hot cap with truncated marker
-        let hot = compact_tool_output(&sample, 0, &budget);
+        let hot = compact_tool_output(&sample, "read_file", 0, &budget);
         assert!(hot.len() <= budget.hot_tool_cap + 10);
         assert!(hot.contains("truncated to fit active context budget"));
 
         // Warm turn (age 2): head + tail with omission notice
-        let warm = compact_tool_output(&sample, 2, &budget);
+        let warm = compact_tool_output(&sample, "read_file", 2, &budget);
         assert!(warm.len() <= budget.warm_tool_cap + 10);
         assert!(warm.contains("omitted for context budget"));
 
         // Cold turn (age 5): preview lines + scratchpad reminder
-        let cold = compact_tool_output(&sample, 5, &budget);
+        let cold = compact_tool_output(&sample, "read_file", 5, &budget);
         assert!(cold.len() <= budget.cold_tool_cap + 10);
         assert!(cold.contains("Key facts preserved in scratchpad"));
+
+        // Scratchpad immunity test: even at age 10 with 5000 chars, scratchpad is NEVER compacted!
+        let pad = compact_tool_output(&sample, "scratchpad", 10, &budget);
+        assert_eq!(pad.len(), sample.len());
+        assert_eq!(pad, sample);
+
+        // Search files immunity test: up to 1200 chars at age 2 is untouched
+        let search_hits = "src/main.rs:10: fn run()\nsrc/lib.rs:25: fn init()\n".repeat(20);
+        assert!(search_hits.len() < 1200);
+        let search_governed = compact_tool_output(&search_hits, "search_files", 2, &budget);
+        assert_eq!(search_governed, search_hits);
+
+        // Compiler noise test: repetitive warnings are cleanly stripped
+        let compiler_spam = "warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied\n   --> src/app.rs:264:64\n\nwarning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied\n   --> src/app.rs:268:58\n\ntest result: ok. 10 passed; 0 failed;\n";
+        let cleaned = compact_tool_output(compiler_spam, "run_command", 0, &budget);
+        assert!(cleaned.contains("test result: ok"));
+        assert!(cleaned.contains("repetitive compiler warnings filtered"));
     }
 
     #[test]
