@@ -12,10 +12,16 @@ use eframe::egui;
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+
+    // Check for help first before initializing runtime or GUI
+    if args.iter().any(|a| a == "--help" || a == "-h" || a == "help") {
+        headless::print_help();
+        return Ok(());
+    }
+
     let is_mcp = args.iter().any(|a| a == "--mcp" || a == "-mcp");
     let is_headless = args.iter().any(|a| {
         a == "--headless"
-            || a == "-h"
             || a == "--test-tools"
             || a == "-t"
             || a == "--prompt"

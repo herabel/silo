@@ -116,7 +116,7 @@ pub async fn run_headless(args: Vec<String>) {
                     i += 1;
                 }
             }
-            "--help" => {
+            "--help" | "-h" => {
                 print_help();
                 return;
             }
@@ -223,19 +223,84 @@ fn format_headless_tool_instruction(
     }
 }
 
-fn print_help() {
-    println!("Silo Headless Runner & Debugger");
-    println!("Usage:");
-    println!(
-        "  silo.exe --headless --test-tools           Run diagnostics on all tools and parser"
-    );
-    println!("  silo.exe --headless --eval \"<python_code>\" Directly evaluate Python code");
-    println!("  silo.exe --headless --prompt \"<prompt>\"    Run interactive turn with local LLM");
-    println!(
-        "  silo.exe --headless --deep \"<topic>\"       Run autonomous multi-step deep research"
-    );
-    println!("  silo.exe --headless --model \"<model_id>\"   Override target model ID");
-    println!("  silo.exe --headless --ctx <tokens>         Override context window tokens (default: 16384)");
+pub fn print_help() {
+    let bin_name = std::env::args()
+        .next()
+        .unwrap_or_else(|| "silo".to_string());
+    let bin_basename = std::path::Path::new(&bin_name)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("silo");
+
+    println!("⚡ Silo — Privacy-First Local AI Workbench & Autonomous Research Agent");
+    println!();
+    println!("USAGE:");
+    println!("    {bin_basename} [OPTIONS]");
+    println!("    {bin_basename} --deep <QUERY> [OPTIONS]");
+    println!("    {bin_basename} --prompt <PROMPT> [OPTIONS]");
+    println!("    {bin_basename} --eval <PYTHON_CODE>");
+    println!("    {bin_basename} --test-tools [OPTIONS]");
+    println!("    {bin_basename} --mcp");
+    println!();
+    println!("EXECUTION MODES:");
+    println!("    (no flags)                Launch the native desktop workbench (egui GUI)");
+    println!("    -d, --deep <QUERY>        Autonomous multi-step deep research investigation");
+    println!("                              Runs hypothesis tracking, persistent scratchpad agenda,");
+    println!("                              parallel web & arXiv search, sandboxed Python calculations,");
+    println!("                              adversarial contradiction probing, and final report synthesis.");
+    println!("    -p, --prompt <PROMPT>     Run single/multi-turn agent execution with tool support");
+    println!("    -e, --eval <CODE>         Directly evaluate Python code in Silo's sandboxed environment");
+    println!("    -t, --test-tools          Run full diagnostic smoke-tests on all local tools & XML parser");
+    println!("    --mcp                     Start Silo as a Model Context Protocol (MCP) server over stdio");
+    println!();
+    println!("OPTIONS & TUNING:");
+    println!("    -u, --url <URL>           LLM server endpoint (e.g. http://127.0.0.1:8085 or http://127.0.0.1:11434)");
+    println!("                              Defaults to server_url in ~/.silo/config.json");
+    println!("    -m, --model <NAME>        Model ID override (e.g. 'Inkling-2-Mini', 'qwen2.5-coder:32b')");
+    println!("                              Auto-detects currently loaded model on server if omitted");
+    println!("    -s, --steps <N>           Max agent tool-iteration steps (default: 16 for deep, 8 for prompt)");
+    println!("    -c, --ctx, --context <N>  Context window limit in tokens (default: 16384)");
+    println!("    -v, --verbose             Print real-time stream telemetry (TTFT, TPS, prompt/completion tokens)");
+    println!("    --no-tools                Disable tool execution (pure text generation / completion)");
+    println!("    -h, --help                Show this detailed help manual and exit");
+    println!();
+    println!("BUILT-IN AGENT TOOLS:");
+    println!("    • scratchpad              Compaction-immune working memory & hypothesis checklist");
+    println!("    • web_search              High-speed DuckDuckGo web search");
+    println!("    • fetch_page              HTML-to-Markdown distillation engine (web_scout)");
+    println!("    • arxiv_search            Academic paper discovery on arXiv");
+    println!("    • fetch_arxiv_paper       Full-text arXiv paper retrieval into local BM25 RAG index");
+    println!("    • execute_python          Local Python REPL for math, simulations, and data verification");
+    println!("    • run_command             Sandboxed local shell execution (cargo, git, etc.)");
+    println!("    • read_file / write_file  Workspace file inspection and safe atomic edits");
+    println!("    • edit_file / patch       Targeted search-and-replace code editing");
+    println!("    • list_dir / search_files Workspace navigation and recursive grep/pattern discovery");
+    println!("    • record_finding          Encrypted Research Board ledger for facts, CVEs & numbers");
+    println!("    • record_contradiction    Structured conflict & dialectic matrix tracking");
+    println!();
+    println!("EXAMPLES:");
+    println!("    # 1. Launch privacy-first desktop UI (default):");
+    println!("    {bin_basename}");
+    println!();
+    println!("    # 2. Run 30-step deep research with local Inkling/llama-server:");
+    println!("    {bin_basename} --deep \"Stateful DPI evasion mechanisms\" --url http://127.0.0.1:8085 --model \"Inkling-2-Mini\" --steps 30 -v");
+    println!();
+    println!("    # 3. Code review / audit turn with tools:");
+    println!("    {bin_basename} --prompt \"Audit src/engine/mod.rs for memory safety and lock contention\" -v");
+    println!();
+    println!("    # 4. Immediate Python numerical verification:");
+    println!("    {bin_basename} --eval \"import math; print('BDP:', 1e9 * 0.05 / 8 / 1024 / 1024, 'MB')\"");
+    println!();
+    println!("    # 5. Run tool diagnostics smoke test:");
+    println!("    {bin_basename} --test-tools --url http://127.0.0.1:8085");
+    println!();
+    println!("    # 6. Start MCP stdio server for Claude / external agents:");
+    println!("    {bin_basename} --mcp");
+    println!();
+    println!("CONFIGURATION & VAULT PATHS:");
+    println!("    Config:  ~/.silo/config.json");
+    println!("    Vault:   ~/.silo/silo.key (AES-256-GCM hardware/OS key)");
+    println!("    Storage: ~/.silo/sessions/ (encrypted session snapshots)");
 }
 
 pub async fn run_tool_diagnostics(server_url_override: Option<&str>) {
