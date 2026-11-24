@@ -54,6 +54,13 @@ impl ContextBudget {
 /// Compact tool output based on its recency (age in completed tool turns) and the context budget.
 pub fn compact_tool_output(content: &str, age: usize, budget: &ContextBudget) -> String {
     let char_count = content.chars().count();
+
+    // Semantic protection: short, dense outputs (<= 600 chars, like search_files,
+    // grep hits, git status, scratchpad) are critical reference anchors and should never be crushed.
+    if char_count <= 600 && age <= 4 {
+        return content.to_string();
+    }
+
     let target_cap = if age <= 1 {
         budget.hot_tool_cap
     } else if age <= 3 {
@@ -136,6 +143,12 @@ pub fn build_governed_payload_messages(
         .map(|(i, _)| i)
         .collect();
     let total_tools = tool_indices.len();
+
+    // Watermark check: Calculate uncompressed message footprint.
+    // If the conversation is comfortably in the green zone (<= 70% of budget),
+    // preserve full fidelity without rolling compaction so the model remembers every detail.
+    let raw_char_sum: usize = messages.iter().map(|m| m.content.len()).sum();
+    let watermark_triggered = raw_char_sum > (budget.prompt_char_budget * 7) / 10;
 
     let last_text_assistant_idx = messages.iter().rposition(|m| {
         m.role == MessageRole::Assistant
@@ -250,7 +263,13 @@ pub fn build_governed_payload_messages(
                 let tool_pos = tool_indices.iter().position(|&i| i == idx).unwrap_or(0);
                 let age = total_tools.saturating_sub(1 + tool_pos);
 
-                let compacted = compact_tool_output(&m.content, age, &budget);
+                let compacted = if watermark_triggered {
+                    compact_tool_output(&m.content, age, &budget)
+                } else if m.content.chars().count() > budget.hot_tool_cap {
+                    compact_tool_output(&m.content, 0, &budget)
+                } else {
+                    m.content.clone()
+                };
 
                 payload_messages.push(json!({
                     "role": "tool",
@@ -450,5 +469,42 @@ mod tests {
             budget16k.prompt_char_budget
         );
         println!("12-step test: total chars = {} (budget = {})", total_chars, budget16k.prompt_char_budget);
+    }
+
+    #[test]
+    fn test_watermark_preserves_full_fidelity_when_under_threshold() {
+        let system_prompt = "You are Silo.";
+        let user_prompt = "Brief query";
+        let mut messages = vec![ChatMessage::user(user_prompt)];
+
+        // 3 tool turns with modest output (~400 chars each = ~1200 chars total, well under 70% watermark)
+        for i in 0..3 {
+            let call_id = format!("call_{}", i);
+            let mut asst = ChatMessage::assistant("", None);
+            asst.tool_calls.push(ToolCallRecord {
+                id: call_id.clone(),
+                name: "search_files".to_string(),
+                arguments: "{}".to_string(),
+                output: None,
+                status: ToolStatus::Success,
+            });
+            messages.push(asst);
+
+            let tool_output = format!("src/main.rs:{}: fn target_{}() {{ let x = {}; }}", i * 10, i, i);
+            let mut tool_msg = ChatMessage::tool(&tool_output, &call_id);
+            tool_msg.tool_call_id = Some(call_id);
+            messages.push(tool_msg);
+        }
+
+        let governed = build_governed_payload_messages(&messages, system_prompt, 16384, 4096, true);
+        // Since we are under the 70% watermark, every tool output should remain 100% intact!
+        for (_idx, msg) in governed.iter().enumerate() {
+            if msg["role"] == "tool" {
+                let content = msg["content"].as_str().unwrap();
+                assert!(content.contains("fn target_"));
+                assert!(!content.contains("compacted"));
+                assert!(!content.contains("truncated"));
+            }
+        }
     }
 }
