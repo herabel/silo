@@ -1,3 +1,4 @@
+pub mod bm25;
 pub mod client;
 pub mod context_governor;
 pub mod ephemeral;
@@ -7,6 +8,7 @@ pub mod skills;
 pub mod stream_parser;
 pub mod tools;
 
+pub use bm25::*;
 pub use client::*;
 pub use context_governor::*;
 pub use ephemeral::*;
