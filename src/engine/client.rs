@@ -1266,11 +1266,12 @@ pub fn build_tool_definitions() -> Vec<Value> {
             "type": "function",
             "function": {
                 "name": "fetch_page",
-                "description": "Reads full webpage Markdown content using native web_scout.",
+                "description": "Reads webpage Markdown content. When 'query' is provided, performs deterministic in-memory BM25 chunk ranking (RAG) to return only the most relevant sections instead of dumping raw page text.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "url": {"type": "string", "description": "Full URL to fetch"}
+                        "url": {"type": "string", "description": "Full URL to fetch"},
+                        "query": {"type": "string", "description": "Optional search query to rank and extract only relevant chunks via BM25"}
                     },
                     "required": ["url"]
                 }

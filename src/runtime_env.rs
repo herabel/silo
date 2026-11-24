@@ -197,7 +197,7 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
                     .to_string(),
             );
             directives
-                .push("- `fetch_page(url)`: Read webpage or paper markdown content.".to_string());
+                .push("- `fetch_page(url, query)`: Read webpage or paper markdown content. When 'query' is provided, performs deterministic in-memory BM25 chunk ranking (RAG) and returns top relevant chunks.".to_string());
 
             let installed_skills = crate::engine::skills::list_installed_skills();
             if !installed_skills.is_empty() {
