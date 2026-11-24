@@ -1310,6 +1310,22 @@ pub fn build_tool_definitions() -> Vec<Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "edit_file",
+                "description": "Replaces an exact target string in an existing file with a replacement string. Reads the file, finds the first exact occurrence of target, replaces it with replacement, and writes the file back.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string", "description": "Absolute or relative file path to edit."},
+                        "target": {"type": "string", "description": "Exact string to find in the file."},
+                        "replacement": {"type": "string", "description": "String to replace the target with."}
+                    },
+                    "required": ["path", "target", "replacement"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "list_dir",
                 "description": "Lists contents of a directory (subdirectories and files with sizes). Skips noisy build/vcs folders (.git, target, node_modules).",
                 "parameters": {

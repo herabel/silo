@@ -1706,6 +1706,69 @@ pub async fn run_write_file(path_str: &str, content: &str) -> (bool, String) {
     }
 }
 
+pub async fn run_edit_file(path_str: &str, target: &str, replacement: &str) -> (bool, String) {
+    let stripped = strip_residual_tags(path_str);
+    let clean_path = stripped.trim().trim_matches('"').trim_matches('\'').trim();
+    if clean_path.is_empty() {
+        return (false, "Error: path is required for edit_file".to_string());
+    }
+    if target.is_empty() {
+        return (false, "Error: target is required for edit_file".to_string());
+    }
+    let p = Path::new(clean_path);
+    if !p.exists() {
+        return (false, format!("File not found: {}", clean_path));
+    }
+    let content = match tokio::fs::read_to_string(p).await {
+        Ok(c) => c,
+        Err(e) => return (false, format!("Failed to read file '{}': {}", clean_path, e)),
+    };
+
+    // CRLF line ending tolerance: normalize target and replacement to match file's line terminators
+    let has_crlf = content.contains("\r\n");
+    let (eff_target, eff_replacement) = if has_crlf && !target.contains("\r\n") {
+        (target.replace('\n', "\r\n"), replacement.replace('\n', "\r\n"))
+    } else if !has_crlf && target.contains("\r\n") {
+        (target.replace("\r\n", "\n"), replacement.replace("\r\n", "\n"))
+    } else {
+        (target.to_string(), replacement.to_string())
+    };
+
+    let match_count = content.matches(&eff_target).count();
+    if match_count == 0 {
+        return (
+            false,
+            format!(
+                "Target string not found in '{}'. Ensure whitespace, indentation, and exact string match.",
+                clean_path
+            ),
+        );
+    }
+    if match_count > 1 {
+        return (
+            false,
+            format!(
+                "Error: target string matched {} times in '{}'. Please provide more surrounding lines/context to ensure a unique match.",
+                match_count, clean_path
+            ),
+        );
+    }
+
+    let new_content = content.replacen(&eff_target, &eff_replacement, 1);
+    match tokio::fs::write(p, new_content.as_bytes()).await {
+        Ok(_) => (
+            true,
+            format!(
+                "Successfully replaced target in {} (1 occurrence, {} chars -> {} chars)",
+                clean_path,
+                eff_target.len(),
+                eff_replacement.len()
+            ),
+        ),
+        Err(e) => (false, format!("Failed to write file '{}': {}", clean_path, e)),
+    }
+}
+
 pub async fn run_list_dir(path_str: &str, depth: Option<usize>) -> (bool, String) {
     let stripped = strip_residual_tags(path_str);
     let target = stripped.trim().trim_matches('"').trim_matches('\'').trim();
@@ -2117,6 +2180,34 @@ pub async fn execute_tool(name: &str, raw_args: &str) -> (bool, String) {
             (args_str.to_string(), String::new())
         };
         run_write_file(&path, &content).await
+    } else if lower_name == "edit_file" || lower_name == "edit" || lower_name == "patch" {
+        let (path, target, replacement) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
+            let p = val
+                .get("path")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let t = val
+                .get("target")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let r = val
+                .get("replacement")
+                .or_else(|| val.get("content"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            (p, t, r)
+        } else if let Some(val) = crate::engine::relaxed_json_parse(args_str) {
+            let p = val.get("path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let t = val.get("target").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let r = val.get("replacement").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            (p, t, r)
+        } else {
+            (String::new(), String::new(), String::new())
+        };
+        run_edit_file(&path, &target, &replacement).await
     } else if lower_name == "list_dir" || lower_name == "ls" || lower_name == "dir" {
         let (path, depth) = if let Ok(val) = serde_json::from_str::<serde_json::Value>(args_str) {
             let p = val
@@ -2342,8 +2433,122 @@ mod tests {
         assert!(is_read_only_tool("execute_python"));
 
         assert!(!is_read_only_tool("write_file"));
+        assert!(!is_read_only_tool("edit_file"));
+        assert!(!is_read_only_tool("edit"));
+        assert!(!is_read_only_tool("patch"));
         assert!(!is_read_only_tool("run_command"));
         assert!(!is_read_only_tool("run_skill"));
+    }
+
+    #[tokio::test]
+    async fn test_run_edit_file_suite() {
+        let temp_dir = std::env::temp_dir();
+        let test_path = temp_dir.join(format!("silo_edit_test_{}.rs", uuid::Uuid::new_v4()));
+        let path_str = test_path.to_string_lossy().to_string();
+
+        let initial_code = r#"
+fn calculate_hash(data: &[u8]) -> u64 {
+    let mut h = 0x12345678;
+    for &b in data {
+        h = h.wrapping_add(b as u64);
+    }
+    h
+}
+"#;
+        tokio::fs::write(&test_path, initial_code).await.expect("write test file");
+
+        // 1. Target not found
+        let (ok, msg) = run_edit_file(&path_str, "nonexistent_target_code", "replacement").await;
+        assert!(!ok);
+        assert!(msg.contains("Target string not found"));
+
+        // 2. File not found
+        let (ok, msg) = run_edit_file("/tmp/nonexistent_file_xyz_123.rs", "target", "replacement").await;
+        assert!(!ok);
+        assert!(msg.contains("File not found"));
+
+        // 3. Empty arguments
+        let (ok, msg) = run_edit_file("", "target", "replacement").await;
+        assert!(!ok);
+        assert!(msg.contains("path is required"));
+
+        let (ok, msg) = run_edit_file(&path_str, "", "replacement").await;
+        assert!(!ok);
+        assert!(msg.contains("target is required"));
+
+        // 4. Successful replacement
+        let target = "h = h.wrapping_add(b as u64);";
+        let replacement = "h = (h << 5).wrapping_add(b as u64);";
+        let (ok, msg) = run_edit_file(&path_str, target, replacement).await;
+        assert!(ok, "run_edit_file failed: {}", msg);
+        assert!(msg.contains("Successfully replaced target"));
+
+        let updated_content = tokio::fs::read_to_string(&test_path).await.expect("read updated file");
+        assert!(updated_content.contains("h = (h << 5).wrapping_add(b as u64);"));
+        assert!(!updated_content.contains("h = h.wrapping_add(b as u64);"));
+
+        // 5. Test multi-line replacement
+        let multi_target = "fn calculate_hash(data: &[u8]) -> u64 {\n    let mut h = 0x12345678;";
+        let multi_replacement = "pub fn calculate_hash(data: &[u8]) -> u64 {\n    let mut h: u64 = 0xDEADBEEF;";
+        let (ok, msg) = run_edit_file(&path_str, multi_target, multi_replacement).await;
+        assert!(ok, "run_edit_file multi-line failed: {}", msg);
+
+        let multi_updated = tokio::fs::read_to_string(&test_path).await.expect("read multi updated file");
+        assert!(multi_updated.contains("pub fn calculate_hash"));
+        assert!(multi_updated.contains("let mut h: u64 = 0xDEADBEEF;"));
+
+        // 6. Test execute_tool dispatch with JSON
+        let tool_args = serde_json::json!({
+            "path": path_str,
+            "target": "let mut h: u64 = 0xDEADBEEF;",
+            "replacement": "let mut h: u64 = 0xCAFEBABE;"
+        }).to_string();
+        let (ok, msg) = execute_tool("edit_file", &tool_args).await;
+        assert!(ok, "execute_tool edit_file failed: {}", msg);
+
+        let final_content = tokio::fs::read_to_string(&test_path).await.expect("read final file");
+        assert!(final_content.contains("let mut h: u64 = 0xCAFEBABE;"));
+
+        // 7. Test execute_tool alias "patch" and fallback key "content"
+        let patch_args = serde_json::json!({
+            "path": path_str,
+            "target": "pub fn calculate_hash",
+            "content": "pub async fn calculate_hash"
+        }).to_string();
+        let (ok, msg) = execute_tool("patch", &patch_args).await;
+        assert!(ok, "execute_tool patch failed: {}", msg);
+
+        let patched_content = tokio::fs::read_to_string(&test_path).await.expect("read patched file");
+        assert!(patched_content.contains("pub async fn calculate_hash"));
+
+        // 8. Test CRLF line ending tolerance
+        let crlf_code = "struct Data {\r\n    field: u32,\r\n}\r\n";
+        tokio::fs::write(&test_path, crlf_code).await.expect("write crlf file");
+        // Target with standard LF should still match CRLF file!
+        let lf_target = "struct Data {\n    field: u32,\n}";
+        let lf_replacement = "struct Data {\n    field: u64,\n}";
+        let (ok, msg) = run_edit_file(&path_str, lf_target, lf_replacement).await;
+        assert!(ok, "CRLF tolerance failed: {}", msg);
+        let crlf_updated = tokio::fs::read_to_string(&test_path).await.expect("read crlf updated");
+        assert!(crlf_updated.contains("\r\n    field: u64,\r\n"));
+
+        // 9. Test ambiguous match protection (>1 occurrences)
+        let dup_code = "fn dup() {\n    let a = 1;\n    let a = 1;\n}\n";
+        tokio::fs::write(&test_path, dup_code).await.expect("write dup file");
+        let (ok, msg) = run_edit_file(&path_str, "let a = 1;", "let a = 2;").await;
+        assert!(!ok, "Should reject ambiguous match");
+        assert!(msg.contains("matched 2 times"), "Error message: {}", msg);
+
+        // 10. Test deletion (empty replacement)
+        let del_target = "fn dup() {\n    let a = 1;\n";
+        let del_replacement = "fn dup() {\n";
+        let (ok, msg) = run_edit_file(&path_str, del_target, del_replacement).await;
+        assert!(ok, "Deletion failed: {}", msg);
+        let del_updated = tokio::fs::read_to_string(&test_path).await.expect("read del updated");
+        assert!(!del_updated.contains("let a = 1;\n    let a = 1;"));
+
+        // Clean up
+        let _ = tokio::fs::remove_file(&test_path).await;
     }
 
     #[test]
