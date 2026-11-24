@@ -184,6 +184,7 @@ pub fn build_configured_system_prompt(config: &ContextConfig) -> String {
             directives.push("- `search_files(pattern, path)`: Recursively search for functions, types, symbols, or text across files. Returns exact file paths and line numbers so you can immediately inspect with `read_file`.".to_string());
             directives.push("- `write_file(path, content)`: Directly write or overwrite code, configs, or documents to disk with exact content. Automatically creates parent directories.".to_string());
             directives.push("- `edit_file(path, target, replacement)`: Surgically replace an exact unique target string in an existing file with replacement text. Always prefer this over rewriting entire large files with `write_file`.".to_string());
+            directives.push("- `scratchpad(action, content)`: In-RAM volatile session notepad for tracking plans, checklists, hypotheses, and intermediate calculations during complex coding tasks. Actions: 'read', 'append', 'set', 'clear'.".to_string());
             directives.push("- `list_dir(path, depth)`: List files and subdirectories with sizes to understand project structure.".to_string());
             directives.push("- `execute_python(code)`: Run Python scripts for deterministic mathematical calculations, data processing, cryptographic hashing, or simulations.".to_string());
             directives.push("- `run_command(cmd, cwd)`: Run shell commands (e.g. `cargo check`, `cargo test`, `git status`) to inspect compiler diagnostics, test builds, or check local environments.".to_string());
