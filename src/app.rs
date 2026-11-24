@@ -1441,6 +1441,18 @@ impl SiloApp {
             } else {
                 format!("Python Execution Result:\n{}\n\n[INSTRUCTION]: Use this exact numerical result to formulate your final response to the user.", effective_output)
             }
+        } else if tool_name == "scratchpad" || tool_name == "notes" || tool_name == "memo" {
+            format!("Scratchpad Content:\n{}\n\n[WORKING MEMORY UPDATED]: Your scratchpad is preserved and 100% immune to context compaction. Continue your plan or proceed to the next step.{}", effective_output, suffix)
+        } else if tool_name == "read_file" || tool_name == "read" {
+            format!("File Content:\n{}\n\n[WORKING MEMORY & CODE PROTOCOL]: If this file contains critical types, function signatures, or line numbers you will reference later, log them into working memory via `scratchpad(action=\"append\", content=\"...\")` now so they remain available if context compacts. Proceed with the next step.{}", effective_output, suffix)
+        } else if tool_name == "search_files" || tool_name == "search_code" || tool_name == "grep" {
+            format!("Search Results:\n{}\n\n[CODE NAVIGATION]: Exact match locations found. Inspect relevant regions with `read_file(path, start_line, end_line)` or record essential paths in scratchpad.{}", effective_output, suffix)
+        } else if tool_name == "list_dir" || tool_name == "ls" {
+            format!("Directory Listing:\n{}\n\n[NAVIGATION]: Directory structure mapped. Use `search_files` or `read_file` to inspect target modules.{}", effective_output, suffix)
+        } else if tool_name == "write_file" || tool_name == "edit_file" || tool_name == "patch" {
+            format!("File Modification Status:\n{}\n\n[CODE INTEGRITY CHECK]: Changes written to disk. Immediately verify syntax and compilation by running `run_command(cmd=\"cargo check\")` or running tests before proceeding.{}", effective_output, suffix)
+        } else if tool_name == "run_command" || tool_name == "cmd" || tool_name == "bash" {
+            format!("Command Execution Result:\n{}\n\n[EXECUTION INSPECTION]: Review compiler/command output above. If errors exist, address them surgically. If clean, proceed with the task.{}", effective_output, suffix)
         } else if tool_name == "run_skill" || tool_name == "skill" {
             format!(
                 "Skill Execution Output:\n{}\n\n[SKILL GUIDANCE]: Skill script finished execution. Review the output above. If additional skill scripts or tools are needed, invoke them. Otherwise, formulate your final response to the user.",

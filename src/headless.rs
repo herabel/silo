@@ -162,7 +162,19 @@ fn format_headless_tool_instruction(
         String::new()
     };
 
-    if tool_name == "arxiv_search" || tool_name == "arxiv" {
+    if tool_name == "scratchpad" || tool_name == "notes" || tool_name == "memo" {
+        format!("Scratchpad Content:\n{}\n\n[WORKING MEMORY UPDATED]: Your scratchpad is preserved and 100% immune to context compaction. Continue your plan or proceed to the next step.{}", out, suffix)
+    } else if tool_name == "read_file" || tool_name == "read" {
+        format!("File Content:\n{}\n\n[WORKING MEMORY & CODE PROTOCOL]: If this file contains critical types, function signatures, or line numbers you will reference later, log them into working memory via `scratchpad(action=\"append\", content=\"...\")` now so they remain available if context compacts. Proceed with the next step.{}", out, suffix)
+    } else if tool_name == "search_files" || tool_name == "search_code" || tool_name == "grep" {
+        format!("Search Results:\n{}\n\n[CODE NAVIGATION]: Exact match locations found. Inspect relevant regions with `read_file(path, start_line, end_line)` or record essential paths in scratchpad.{}", out, suffix)
+    } else if tool_name == "list_dir" || tool_name == "ls" {
+        format!("Directory Listing:\n{}\n\n[NAVIGATION]: Directory structure mapped. Use `search_files` or `read_file` to inspect target modules.{}", out, suffix)
+    } else if tool_name == "write_file" || tool_name == "edit_file" || tool_name == "patch" {
+        format!("File Modification Status:\n{}\n\n[CODE INTEGRITY CHECK]: Changes written to disk. Immediately verify syntax and compilation by running `run_command(cmd=\"cargo check\")` or running tests before proceeding.{}", out, suffix)
+    } else if tool_name == "run_command" || tool_name == "cmd" || tool_name == "bash" {
+        format!("Command Execution Result:\n{}\n\n[EXECUTION INSPECTION]: Review compiler/command output above. If errors exist, address them surgically. If clean, proceed with the task.{}", out, suffix)
+    } else if tool_name == "arxiv_search" || tool_name == "arxiv" {
         if is_deep && *fetch_count < max_fetches {
             format!("Results:\n{}\n\n[DEEP RESEARCH GUIDANCE]: Verified technical papers retrieved. Extract concrete mechanisms, CVEs, or numbers and call `record_finding` to save them into working memory. If you need to verify math, call `execute_python`. If you need industry advisories, call `web_search` or `fetch_page`. You have {} page reads remaining.{}", out, max_fetches - *fetch_count, suffix)
         } else {
@@ -473,7 +485,7 @@ pub async fn run_agent_session(
     }
     messages.push(ChatMessage::user(query));
 
-    let default_tool_steps = if is_deep { 12 } else { 6 };
+    let default_tool_steps = if is_deep { 16 } else { 8 };
     let max_tool_steps = custom_steps.unwrap_or(default_tool_steps);
     let max_fetches = if is_deep { max_tool_steps / 2 + 1 } else { 2 };
     let mut fetch_count = 0;
