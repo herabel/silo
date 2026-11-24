@@ -378,6 +378,25 @@ pub fn build_governed_payload_messages(
         normalized_messages.push(msg);
     }
 
+    // Dynamic HUD injection: If active scratchpad has content, ensure the model sees it
+    // right before its generation turn so working memory is never lost across turns.
+    let pad = crate::engine::tools::get_active_scratchpad();
+    if !pad.trim().is_empty() {
+        if let Some(last_msg) = normalized_messages.last_mut() {
+            let content_str = last_msg.get("content").and_then(|c| c.as_str()).unwrap_or("");
+            if !content_str.contains("[ACTIVE SCRATCHPAD / WORKING MEMORY]:")
+                && !content_str.contains("Current content:")
+            {
+                let hud = format!("\n\n[ACTIVE SCRATCHPAD / WORKING MEMORY]:\n{}", pad.trim());
+                if let Some(content_val) = last_msg.get_mut("content") {
+                    if let Some(s) = content_val.as_str() {
+                        *content_val = Value::String(format!("{}{}", s, hud));
+                    }
+                }
+            }
+        }
+    }
+
     // Calculate total character footprint across message bodies
     let calc_total_chars = |msgs: &[Value]| -> usize {
         msgs.iter()
@@ -599,5 +618,22 @@ mod tests {
                 assert!(!content.contains("truncated"));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_scratchpad_hud_injection() {
+        let _ = crate::engine::tools::run_scratchpad("set", "TODO: refactor memory").await;
+
+        let system_prompt = "You are Silo.";
+        let messages = vec![ChatMessage::user("Status report")];
+
+        let governed = build_governed_payload_messages(&messages, system_prompt, 16384, 4096, true);
+        let last = governed.last().unwrap();
+        let content = last["content"].as_str().unwrap();
+
+        assert!(content.contains("[ACTIVE SCRATCHPAD / WORKING MEMORY]:"));
+        assert!(content.contains("TODO: refactor memory"));
+
+        let _ = crate::engine::tools::run_scratchpad("clear", "").await;
     }
 }

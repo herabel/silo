@@ -8,6 +8,19 @@ static DDG_BACKOFF_SECS: AtomicU32 = AtomicU32::new(30);
 
 static ACTIVE_SCRATCHPAD: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
 
+/// Retrieve a snapshot of the active in-RAM working memory / scratchpad.
+pub fn get_active_scratchpad() -> String {
+    ACTIVE_SCRATCHPAD.read().map(|b| b.clone()).unwrap_or_default()
+}
+
+/// Reset active in-RAM scratchpad.
+#[allow(dead_code)]
+pub fn clear_active_scratchpad() {
+    if let Ok(mut b) = ACTIVE_SCRATCHPAD.write() {
+        b.clear();
+    }
+}
+
 pub async fn run_scratchpad(action: &str, content: &str) -> (bool, String) {
     let mut buf = ACTIVE_SCRATCHPAD.write().unwrap();
     match action {
@@ -19,15 +32,15 @@ pub async fn run_scratchpad(action: &str, content: &str) -> (bool, String) {
             }
         }
         "append" => {
-            if !buf.is_empty() {
+            if !buf.is_empty() && !buf.ends_with('\n') {
                 buf.push('\n');
             }
             buf.push_str(content);
-            (true, format!("Appended. Scratchpad now holds {} bytes.", buf.len()))
+            (true, format!("Appended to scratchpad. Current content:\n{}", *buf))
         }
         "set" => {
             *buf = content.to_string();
-            (true, format!("Scratchpad set. Holds {} bytes.", buf.len()))
+            (true, format!("Scratchpad updated. Current content:\n{}", *buf))
         }
         "clear" => {
             buf.clear();
@@ -2495,6 +2508,8 @@ mod tests {
         // execute_tool dispatch
         let (ok, msg) = execute_tool("scratchpad", "{\"action\":\"set\",\"content\":\"via tool\"}").await;
         assert!(ok, "{}", msg);
+        assert!(msg.contains("via tool"));
+        assert_eq!(get_active_scratchpad(), "via tool");
         let (ok, msg) = execute_tool("notes", "{\"action\":\"read\"}").await;
         assert!(ok);
         assert_eq!(msg, "via tool");
