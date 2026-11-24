@@ -397,13 +397,17 @@ Some preliminary thought here.
     };
     let passes_disabled = build_configured_system_prompt(&disabled_config).is_empty();
 
+    let real_home = if std::env::consts::OS == "windows" {
+        std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\User".to_string())
+    } else {
+        std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string())
+    };
     let raw_tool_log = format!(
         "User directory: {}\nFile at {}/project.txt",
-        std::env::var("USERPROFILE").unwrap_or_default(),
-        std::env::var("USERPROFILE").unwrap_or_default()
+        real_home, real_home
     );
     let sanitized_log = mask_output_data(&raw_tool_log, &spoof_config);
-    let passes_mask = !sanitized_log.contains(&std::env::var("USERPROFILE").unwrap_or_default())
+    let passes_mask = !sanitized_log.contains(&real_home)
         && sanitized_log.contains("/home/developer");
 
     if passes_prompt && passes_disabled && passes_mask {
