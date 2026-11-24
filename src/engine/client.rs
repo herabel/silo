@@ -1326,6 +1326,28 @@ pub fn build_tool_definitions() -> Vec<Value> {
         json!({
             "type": "function",
             "function": {
+                "name": "scratchpad",
+                "description": "In-RAM volatile session notepad for storing hypotheses, plans, checklists, and intermediate notes during complex coding or debugging tasks. Not saved to disk.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["read", "append", "set", "clear"],
+                            "description": "Operation to perform: 'read' (get notes), 'append' (add note with newline), 'set' (overwrite all notes), 'clear' (empty notepad)."
+                        },
+                        "content": {
+                            "type": "string",
+                            "description": "Text content to append or set (optional for 'read' and 'clear')."
+                        }
+                    },
+                    "required": ["action"]
+                }
+            }
+        }),
+        json!({
+            "type": "function",
+            "function": {
                 "name": "list_dir",
                 "description": "Lists contents of a directory (subdirectories and files with sizes). Skips noisy build/vcs folders (.git, target, node_modules).",
                 "parameters": {
